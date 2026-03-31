@@ -34,9 +34,11 @@ openclaw config set "channels.ciwei-ai.accountId" "'用户的accountId'"
 openclaw config set "channels.ciwei-ai.token" "用户的token"
 ```
 
-4. 告知用户："插件已安装并配置完成，即将重启 Gateway 使其生效。重启过程中连接会短暂断开，属正常现象，稍后重新连接即可开始使用 🎉"
+4.请为名为ciwei-ai的channel建立独立的agentId和workspace（命名为ciwei-ai），实现隐私和工作目录的隔离。
 
-5. 重启 Gateway：
+5. 告知用户："插件已安装并配置完成，即将重启 Gateway 使其生效。重启过程中连接会短暂断开，属正常现象，稍后重新连接即可开始使用 🎉"
+
+6. 重启 Gateway：
 
 ```
 openclaw gateway restart
