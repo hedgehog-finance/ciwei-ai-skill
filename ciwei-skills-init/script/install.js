@@ -171,32 +171,70 @@ function cleanup(...paths) {
 
   console.log('✅ AGENTS.md 写入完成');
 
-  // ── 6. 安装 ciwei-skills-guide skill ─────────────────────────────────────────
-  console.log('\n📦 [6/7] 安装 ciwei-skills-guide skill ...');
+	// ── 6. 安装 ciwei-skills-guide skill ─────────────────────────────────────────
+	console.log('\n📦 [6/7] 安装 ciwei-skills-guide skill ...');
 
-  const skillResult = oc('skills install https://github.com/hedgehog-finance/ciwei-ai-skill/tree/main/ciwei-skills-guide');
-  if (skillResult.ok) {
-    console.log('✅ ciwei-skills-guide 安装成功（GitHub）');
-  } else {
-    console.warn('⚠️  GitHub 不可达，尝试备用地址...');
+	const targetSkillDir = path.join(agentDir, 'skills', 'ciwei-skills-guide');
+	mkdirSync(path.join(agentDir, 'skills'), { recursive: true });
 
-    const tmpSkillZip = path.join(os.tmpdir(), 'ciwei-skills-guide.zip');
-    const tmpSkillDir = path.join(os.tmpdir(), 'ciwei-skills-guide-pkg');
+	let githubSuccess = false;
+	// 给两个步骤共用的临时解压目录
+	const tmpSkillZip = path.join(os.tmpdir(), 'ciwei-skills-guide.zip');
+	const tmpSkillDir = path.join(os.tmpdir(), 'ciwei-skills-guide-pkg');
 
-    try {
-      await download('https://ciweiai.com/ciwei-skills-guide.zip', tmpSkillZip);
-      unzip(tmpSkillZip, tmpSkillDir);
-      const fallback = oc(`skills install "${tmpSkillDir}"`);
-      if (!fallback.ok) throw new Error('本地安装失败');
-      console.log('✅ ciwei-skills-guide 安装成功（备用地址）');
-    } catch (e) {
-      console.warn(`⚠️  ciwei-skills-guide 安装失败：${e.message}，请事后手动安装。`);
-    } finally {
-      cleanup(tmpSkillZip, tmpSkillDir);
-    }
-  }
+	// ── 尝试 1: 直接下载 GitHub 的源码 zip 包 ──
+	try {
+		console.log('🔄 正在尝试从 GitHub 下载技能包...');
+		cleanup(tmpSkillZip, tmpSkillDir); // 确保环境干净
 
-  // ── 7. 重启 Gateway ───────────────────────────────────────────────────────────
+		// 下载 GitHub 的主分支压缩包
+		await download('https://github.com/hedgehog-finance/ciwei-ai-skill/archive/refs/heads/main.zip', tmpSkillZip);
+		unzip(tmpSkillZip, tmpSkillDir);
+
+		// 解压出来的文件夹通常叫 "ciwei-ai-skill-main"，技能在它的子目录 "ciwei-skills-guide" 里
+		const githubSkillPath = path.join(tmpSkillDir, 'ciwei-ai-skill-main', 'ciwei-skills-guide');
+
+		if (fs.existsSync(path.join(githubSkillPath, 'SKILL.md'))) {
+			fs.cpSync(githubSkillPath, targetSkillDir, { recursive: true, force: true });
+			console.log('✅ ciwei-skills-guide 安装成功（GitHub）');
+			githubSuccess = true;
+		} else {
+			throw new Error('解压后未找到 ciwei-skills-guide 目录');
+		}
+	} catch (e) {
+		console.warn(`⚠️ GitHub 下载失败 (${e.message})，尝试备用 ZIP 地址...`);
+	} finally {
+		cleanup(tmpSkillZip, tmpSkillDir);
+	}
+	// ── 尝试 2: 降级走私服 ZIP 备用下载 ──
+	if (!githubSuccess) {
+		try {
+			console.log('🔄 正在从备用地址下载技能包...');
+			cleanup(tmpSkillZip, tmpSkillDir); // 再次清理
+
+			await download('https://ciweiai.com/ciwei-skills-guide.zip', tmpSkillZip);
+			unzip(tmpSkillZip, tmpSkillDir);
+
+			// 动态脱去 ZIP 压缩包里可能多出的一层文件夹
+			let realSkillDir = tmpSkillDir;
+			const contents = fs.readdirSync(tmpSkillDir).filter(n => n !== '__MACOSX' && !n.startsWith('.'));
+			if (contents.length === 1 && fs.statSync(path.join(tmpSkillDir, contents[0])).isDirectory()) {
+				realSkillDir = path.join(tmpSkillDir, contents[0]);
+			}
+			if (!fs.existsSync(path.join(realSkillDir, 'SKILL.md'))) {
+				throw new Error('下载的备用包中未找到 SKILL.md');
+			}
+
+			fs.cpSync(realSkillDir, targetSkillDir, { recursive: true, force: true });
+			console.log('✅ ciwei-skills-guide 安装成功（备用地址）');
+		} catch (e) {
+			console.warn(`⚠️ ciwei-skills-guide 安装失败：${e.message}，请事后手动安装。`);
+		} finally {
+			cleanup(tmpSkillZip, tmpSkillDir);
+		}
+	}
+
+	// ── 7. 重启 Gateway ───────────────────────────────────────────────────────────
   console.log('\n🔄 [7/7] 重启 Gateway ...');
   oc('gateway restart');
 
