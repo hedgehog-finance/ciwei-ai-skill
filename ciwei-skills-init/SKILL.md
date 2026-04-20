@@ -1,7 +1,6 @@
 ---
-name: ciwei-ai
-description: ciwei-ai 插件安装与配置技能 - 一键在 OpenClaw 中安装并配置 ciwei-ai，快速完成账号绑定与服务接入。支持首次安装、账号重绑、token 更新与接入失败重配。
-
+name: ciwei-skills-init
+description: Ciwei AI安装配置skill。 Ciwei AI链接openclaw时配置、token更新、安装ciwei-ai插件、安装ciwei-skills-guide skill时使用。
 ---
 
 # 一键接入 ciwei-ai
@@ -12,9 +11,10 @@ description: ciwei-ai 插件安装与配置技能 - 一键在 OpenClaw 中安装
 
 ## 适用场景
 
-- 首次在 OpenClaw 中安装 ciwei-ai
+- 首次在 OpenClaw 中安装 ciwei-ai插件
 - 更换账号后重新绑定
 - 更新 token
+- 安装ciwei-skills-guide skill
 - 接入失败时重新配置
 
 ---
@@ -23,11 +23,9 @@ description: ciwei-ai 插件安装与配置技能 - 一键在 OpenClaw 中安装
 
 所有执行逻辑位于 `scripts/` 目录：
 
-```
 scripts/
 ├── install.js        # 首次安装 / 重新配置
 └── update-token.js   # 仅更新 token
-```
 
 ---
 
@@ -48,15 +46,15 @@ scripts/
 2. 写入 channel 配置（`enabled` / `accountId` / `token`）
 3. 创建独立 agent 与 workspace（路径隔离）
 4. 追加 `SOUL.md` 身份设定（金融投资专家角色）
-5. 追加 `AGENTS.md` 核心交互协议（cw_* JSON 指令规范）
+5. **拆分并写入独立业务规则（解耦架构）：**
+    - 生成 `protocols/context_loader.md`（上下文与记忆加载规范）
+    - 精简 `AGENTS.md`，将其改造为纯粹的任务调度流水线
 6. 安装 `ciwei-skills-guide` skill（GitHub 优先，失败后自动切换备用 zip 地址）
 7. 重启 Gateway 使配置生效
 
 **调用方式：**
 
-```bash
 node scripts/install.js <token> <accountId>
-```
 
 ---
 
@@ -77,9 +75,7 @@ node scripts/install.js <token> <accountId>
 
 **调用方式：**
 
-```bash
 node scripts/update-token.js <new_token>
-```
 
 ---
 
@@ -109,13 +105,11 @@ node scripts/update-token.js <new_token>
 
 ## 用户触发示例
 
-```
 # 首次安装
-帮我安装 ciwei-ai 插件，我的token是xxx，account是xxx
+帮我通过ciwei-ai-skill安装ciwei-ai插件，我的 token 是 xxx，accountId 是 xxx
 
 # 更新 token
-帮我更新一下 ciwei-ai 的 token，新 token 是 xxx
-```
+帮我更新一下 ciwei-ai 插件的 token，新 token 是 xxx
 
 ---
 
