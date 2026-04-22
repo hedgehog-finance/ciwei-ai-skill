@@ -11,9 +11,18 @@ metadata:
 
 > **强制规范（CRITICAL）**： 
 >
->  所有 API 请求的绝对路径必须严格基于此 Base URL 拼接：`https://api.ciweiai.com/api/data`。 
+>  所有 API 请求的绝对路径必须严格按照以下逻辑拼接：`BaseURL + Endpoint`。 
 >
-> 例如：当指令要求请求 `/v1/stock-basic` 时，实际触发的完整 URL 必须是 `https://api.ciweiai.com/api/data/v1/stock-basic`。严禁捏造或修改域名！
+>  例如：`https://api.ciweiai.com/api/data` + `/v1/daily` = `https://api.ciweiai.com/api/data/v1/daily`。请确保路径中没有双斜杠或丢失中间路径！
+
+> **请求方式（CRITICAL）**：
+> 严禁使用 `web_fetch`，必须用 `exec` + `curl`。跨平台注意：Windows 用 `curl.exe`，不要用 `head`/`tail`/`grep`。详见 `references/hedgehog-finance-data.md`。
+>
+> **URL 编码前置检查（发送 curl 前必做）**：
+> 1. 检查当前请求的 URL 中是否有中文/非 ASCII 字符
+> 2. **有中文 → 必须用 curl/curl.exe -G --data-urlencode "key=value"**，中文参数放 `--data-urlencode` 后，其余英文参数拼 URL
+> 3. **无中文 → 直接 curl/curl.exe "https://..."**
+> 4. 编码失败 = 必 400，不可跳过此步
 
 ---
 
@@ -89,7 +98,7 @@ metadata:
 ```
 1. 确认 stock_code（同工作流一第 1 步）
 
-2. 按需调用指标端点，默认日期范围取近 60 个交易日
+2. 按需调用指标端点，默认日期范围取近 90 个交易日（确保指标计算稳定）
    → GET /v1/indicator/{指标名}?stock_code=&start_date=&end_date=
 
 3. 用自然语言解读指标含义，不要只返回原始数字
@@ -99,25 +108,27 @@ metadata:
 
 ## 端点选择速查
 
-| 用户问的是… | 用这个端点 |
-|---|---|
-| 股票叫什么名字 / 属于哪个行业 | `/v1/stock-basic` |
-| 某只股票某段时间的价格 | `/v1/daily` |
-| 今天 / 最近有什么财经新闻 | `/v1/news-short-search` |
-| 某个话题的深度报道 | `/v1/news-major-chunks/search` |
-| 某股票 / 行业的研报列表 | `/v1/research-reports` |
-| 研报里提到某个观点的段落 | `/v1/research-report-chunks/search` |
-| MA / MACD / RSI / KDJ / BOLL | `/v1/indicator/{ma|macd|rsi|kdj|boll}` |
+| 用户问的是… | 用这个端点 | 常用可选参数 |
+|---|---|---|
+| 股票名称 / 代码 / 行业 | `/v1/stock-basic` | `name`, `stock_code` |
+| 历史价格行情 (OHLCV) | `/v1/daily` | `start_date`, `end_date`, `limit` |
+| 财经快讯 (实时/近期) | `/v1/news-short-search` | `keyword`, `limit`, `skip` |
+| 专题报道 (深度分析) | `/v1/news-major-chunks/search` | `keyword`, `limit` |
+| 研报列表 (个股/行业) | `/v1/research-reports` | `report_type`, `stock_code`, `industry` |
+| 研报观点内容搜索 | `/v1/research-report-chunks/search` | `keyword`, `report_type`, `limit` |
+| 技术指标 (MA/MACD等) | `/v1/indicator/{name}` | `stock_code`, `start_date`, `end_date` |
 
 ---
 
 ## 重要注意事项
 
-- **日期格式统一用 `YYYYMMDD`**，例如 `20250320`，新闻端点同样如此
+- **日期输入格式统一用 `YYYYMMDD`**（如 `20250320`）；API 返回的日期时间格式（如 `YYYY-MM-DD`）仅供展示，不可直接作为后续请求的输入。
 - **不知道股票代码时，先调 `/v1/stock-basic?name=` 获取**，不要猜测代码
 - **语义搜索的 keyword 直接用中文自然语言**，无需拆词，例如 `keyword=央行降息对银行板块的影响`
 - **技术指标默认参数已经是最佳实践**，无需在请求中手动指定周期参数
+- **单位换算**：A 股交易单位为“手”（1 手 = 100 股），若涉及成交量计算，请务必确认单位并进行换算。
 - **分页**：默认 `limit` 已够用，需要更多数据时用 `skip` 翻页，避免一次拉取过多
+- **空结果处理**：若请求返回 `[]`（空数组），表示数据库暂无该项数据，必须如实回答“暂未查询到相关信息”，严禁基于名称捏造任何数字或结论。
 
 ---
 

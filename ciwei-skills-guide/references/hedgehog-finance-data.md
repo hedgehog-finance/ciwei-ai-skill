@@ -1,8 +1,24 @@
 # 刺猬财经数据 API 参考文档 🦔
 
-> **基础 URL**: `https://api.ciweiai.com/api/data`  
+> **基础 URL**: `https://api.ciweiai.com/api/data` 
 > **数据范围**: 中国 A 股市场（沪深两市）
-
+>
+> **请求方式（CRITICAL）**：
+>
+> 严禁使用 `web_fetch`。
+> 必须使用 `exec` 执行 curl 命令。
+>
+> **跨平台兼容**：
+> - macOS/Linux：使用 `curl`
+> - Windows PowerShell：使用 `curl.exe`（PowerShell 中 `curl` 是 `Invoke-WebRequest` 的别名）
+>
+> 不要使用 `head`/`tail`/`grep`，直接 curl 不加管道即可。
+>
+> **URL 编码前置检查（发送 curl 前必做）**：
+> 1. 检查请求参数中是否含中文/非 ASCII 字符
+> 2. **有中文 → 必须用 `curl/curl.exe -G --data-urlencode "key=value"`**
+> 3. **无中文 → 直接 `curl/curl.exe "https://..."`**
+> 4. 漏检 = 必 400
 ---
 
 ## 目录
@@ -42,7 +58,7 @@
 ]
 ```
 
-**字段说明**：`open/high/low/close` 为价格，`pct_chg` 为涨跌幅（%），`vol` 为成交量（手），`amount` 为成交额（元）。
+**字段说明**：`open/high/low/close` 为价格，`pct_chg` 为涨跌幅（%）。`vol` 为成交量（**单位：手，1手=100股**），`amount` 为成交额（元）。在汇报成交量时，请根据语境统一单位。
 
 ---
 
@@ -247,22 +263,26 @@
 
 ## 请求示例
 
-```bash
-# 通过名称查找股票代码
-curl "https://api.ciweiai.com/api/data/v1/stock-basic?name=平安银行"
+> **URL 中包含中文参数时，必须使用 `curl -G --data-urlencode` 格式**，让指令自动编码，避免 400 错误。
 
-# 获取 000001 近 30 日行情
+```bash
+# 通过名称查找股票代码（中文 → --data-urlencode）
+curl -G "https://api.ciweiai.com/api/data/v1/stock-basic" --data-urlencode "name=平安银行"
+
+# 获取 000001 近 30 日行情（纯英文/数字 → 直接拼 URL）
 curl "https://api.ciweiai.com/api/data/v1/daily?stock_code=000001&start_date=20250201&end_date=20250320&limit=30"
 
-# 搜索"黄金价格"相关快讯
-curl "https://api.ciweiai.com/api/data/v1/news-short-search?keyword=黄金价格&start_time=20250301&end_time=20250320&limit=5"
+# 搜索"黄金价格"相关快讯（keyword 含中文 → --data-urlencode）
+curl -G "https://api.ciweiai.com/api/data/v1/news-short-search?start_time=20250301&end_time=20250320&limit=5" --data-urlencode "keyword=黄金价格"
 
-# 获取 000001 的 MACD 指标
+# 获取 000001 的 MACD 指标（纯英文/数字 → 直接拼 URL）
 curl "https://api.ciweiai.com/api/data/v1/indicator/macd?stock_code=000001&start_date=20250101&end_date=20250320"
 
-# 搜索银行业研报
-curl "https://api.ciweiai.com/api/data/v1/research-reports?industry=银行&report_type=industry&limit=10"
+# 搜索行业研报（industry 含中文 → --data-urlencode）
+curl -G "https://api.ciweiai.com/api/data/v1/research-reports?report_type=industry&limit=10" --data-urlencode "industry=银行"
 
-# 对研报内容语义搜索
-curl "https://api.ciweiai.com/api/data/v1/research-report-chunks/search?keyword=净利润增速&report_type=stock&limit=5"
+# 对研报内容语义搜索（keyword 含中文 → --data-urlencode）
+curl -G "https://api.ciweiai.com/api/data/v1/research-report-chunks/search?report_type=stock&limit=5" --data-urlencode "keyword=净利润增速"
 ```
+
+---
