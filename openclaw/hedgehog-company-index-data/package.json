@@ -1,10 +1,10 @@
 {
   "name": "hedgehog-company-index-data",
   "license": "GPL-3.0",
-  "version": "1.7.0",
+  "version": "1.9.0",
   "private": true,
   "type": "commonjs",
-  "description": "Query A-share listed company data: basic info, daily quotes, fundamentals, capital flow, financial statements, Shenwan industry data, trading calendar.",
+  "description": "Query A-share company, domestic/global index quotes and weights, financial, Shenwan industry, and trading calendar data.",
   "engines": {
     "node": ">=18"
   }

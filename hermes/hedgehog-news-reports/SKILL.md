@@ -1,12 +1,12 @@
 ---
 name: hedgehog-news-reports
 description: >
-  Financial news and reports: breaking news, major events, news analysis, A-share research reports,
-  report analysis, listed company announcements.
-  Best for: news, research reports, announcements.
+  Financial news and reports: unified topic search across news, A-share research reports and listed
+  company announcements, plus breaking news, detail lookup and analysis.
+  Best for: cross-content financial information search, news, research reports, announcements.
   NOT for: stock quotes, fundamentals, financial statements, Shenwan industry data.
-  Triggers: financial news, stock news, breaking news, research report, company announcement, financial report.
-version: 1.7.1
+  Triggers: financial information search, financial news, stock news, breaking news, research report, company announcement, financial report.
+version: 1.8.0
 metadata:
   hermes:
     tags: [finance, news, research-reports]
@@ -22,16 +22,17 @@ required_environment_variables:
 
 # 财经资讯数据
 
-本 skill 通过接口查询财经相关快讯、新闻、研报以及上市公司公告等。
+本 skill 通过接口统一搜索或分类查询财经快讯、新闻、研报以及上市公司公告。
 
 ## 核心功能工作流 (Workflow)
-1. 识别查询对象：快讯分析、重大新闻、新闻分析、研报、研报分析、公告详情或公告分析。
+1. 识别查询对象：跨类型财经信息、快讯分析、重大新闻、新闻分析、研报、研报分析、公告详情或公告分析。
 2. 区分用户要"原始单篇内容"还是"检索列表"：
+   - 只给出主题/公司/事件，未限定信息类型，或明确要同时搜索新闻、研报和公告 → Tool-8；
    - 要查询快讯列表 → Tool-1；
    - 要新闻原文 → Tool-2；要新闻列表 → Tool-3；
    - 要研报原文 → Tool-4；要研报列表 → Tool-5；
    - 要公告原文 → Tool-6；要公告列表 → Tool-7。
-3. 用户要原文详情但未提供 ID 时，先用分析类 Tool 找候选 ID；不要自行猜测 ID。
+3. 用户要原文详情但未提供 ID 时，先用对应列表 Tool 或 Tool-8 找候选 ID；不要自行猜测 ID。
 4. 选择对应 Tool 后，按本文件参数表组织调用参数。
 5. 使用 `scripts/call_api.js` 执行调用。
 6. 解析结果，保留标题、发布时间/日期、来源/机构、摘要、正文或分析结论；无结果返回 `null`，不得编造内容。
@@ -61,7 +62,9 @@ hermes config set CIWEIAI_API_KEY "your-api-key-here"
 - **主 Agent**：使用 `read(path, offset, limit)` 或 `bash("head -N <file>")` 按需读取落盘数据
 
 **检索区分**：
-`keyword` 向量匹配，须配合 `start_date` 限定时间；`tags` 用于精确匹配（行业/主题/股票名称/代码统一放入 tags）。
+- `searchInformation` 仅需自然语言 `keyword`，用于新闻、研报、公告的跨类型混排；不支持日期、类型或评分筛选，默认只返回 10 条。
+- 分类列表接口中，`keyword` 用于语义匹配；`queryNewsList` 使用 `keyword` 时须配合 `start_date` 限定时间。
+- `tags` 用于分类列表的精确匹配（行业/主题/股票名称/代码统一放入 tags）。
 
 **新闻/公告日期时间边界**：
 - `queryNewsList`、`queryAnnouncementList` 的 `start_date`/`end_date` 字段名不变，支持纯日期 `YYYY-MM-DD`/`YYYYMMDD`，也支持日期时间 `YYYY-MM-DD HH:MM[:SS]`、`YYYYMMDD HH:MM[:SS]` 及等价的 `T` 分隔格式；按 `Asia/Shanghai` 解释。
@@ -246,10 +249,25 @@ hermes config set CIWEIAI_API_KEY "your-api-key-here"
 | importance_score | int | 公告重要性评分 |
 | market_sentiment_score | int | 市场情绪影响评分 |
 
+---
+
+### Tool-8: searchInformation (统一搜索新闻、研报和公告)
+**适用场景**：用户只提供一个主题、公司或事件，未限定信息类型；或需要在新闻、研报和公告中一次搜索并按相关性混排。若用户明确要求日期、类型、标签或评分筛选，改用对应分类列表 Tool。
+
+**典型调用**：`node ${HERMES_SKILL_DIR}/scripts/call_api.js --api searchInformation --params '{"keyword":"人工智能产业链"}' --dir <sessionTaskDir>`
+
+**输入参数 `params`：**
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|---|---|---|---|---|
+| keyword | string | 是 | - | 自然语言搜索词，例如公司名、行业主题或事件；必须为非空字符串 |
+| limit | int | 否 | 10 | 返回条数，范围 1–100；仅在用户明确需要更多候选时调大 |
+
+**返回值**：固定 9 字段的扁平混排数组，最多 `limit` 条；每项以 `content_type` 区分 `news`、`research`、`announcement`，并保留用于混排排序的 `hybrid_score`。脚本会统一 ID、日期、分析和业务评分字段，不返回原始嵌套结构、标签或行业/股票影响明细。字段结构见 `references/informationSearch.md`。
+
 ## 错误处理
 | 错误类型 | 处理方式 |
 |---|---|
-| 参数校验失败 | 检查必填项及时间范围（快讯≤5天，新闻/研报≤90天，公告≤30天） |
+| 参数校验失败 | 检查必填项、`limit` 范围（统一搜索为 1–100）及时间范围（快讯≤5天，新闻/研报≤90天，公告≤30天） |
 | HTTP 4xx | 检查参数格式与路径参数 |
 | HTTP 5xx | 提示用户服务端错误，建议稍后重试 |
 | 连接失败 | 提示检查 api.ciweiai.com 可达性 |

@@ -1,10 +1,10 @@
 {
   "name": "hedgehog-news-reports",
   "license": "GPL-3.0",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "private": true,
   "type": "commonjs",
-  "description": "Financial news and reports: breaking news, news analysis, A-share research reports, listed company announcements.",
+  "description": "Unified search and analysis for financial news, A-share research reports, and listed company announcements.",
   "engines": {
     "node": ">=18"
   }

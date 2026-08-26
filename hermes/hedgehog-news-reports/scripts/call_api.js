@@ -27,11 +27,24 @@ const FLASH_NEWS_SOURCES = ['华尔街见闻', '第一财经', '财联社', '金
  * - method/path: HTTP 方法和路径
  * - forced:      内部强制写死的参数（覆盖调用方传值，不对外暴露）
  * - required:    必填参数（缺失则报错）
+ * - defaultLimit/maxLimit: 直接使用 limit 的接口默认值与上限
+ * - allowFields: 是否允许调用方使用本地 fields 过滤
  * - constraints: 调用前的参数校验
  *     - { field: { maxAgeDays: N } } 表示该日期/时间字段距当前不得超过 N 天
  *     - dateTimeRange 表示起止字段可传纯日期或日期时间，并校验起止顺序
  */
 const API_ROUTES = {
+  // ===== 新闻、研报与公告统一搜索 =====
+  searchInformation: {
+    method: 'POST',
+    path: '/v1/information/search',
+    saveOutput: true,
+    required: ['keyword'],
+    defaultLimit: 10,
+    maxLimit: 100,
+    allowFields: false,
+  },
+
   // ===== 新闻与快讯 =====
   getNewsDetail: {
     method: 'GET',
@@ -331,9 +344,27 @@ function validateFlashNewsQueryParams(apiName, params) {
   }
 }
 
+function validateInformationSearchParams(apiName, params) {
+  const allowedParams = new Set(['keyword', 'limit']);
+  for (const key of Object.keys(params)) {
+    if (!allowedParams.has(key)) {
+      throw new Error(`${apiName} 不支持参数: ${key}. 可用参数: keyword, limit`);
+    }
+  }
+
+  if (params.keyword !== undefined && params.keyword !== null) {
+    if (typeof params.keyword !== 'string' || params.keyword.trim() === '') {
+      throw new Error(`${apiName} 参数 keyword 必须为非空字符串`);
+    }
+  }
+}
+
 function applyConstraints(route, apiName, params) {
   if (apiName === 'queryFlashNewsList') {
     validateFlashNewsQueryParams(apiName, params);
+  }
+  if (apiName === 'searchInformation') {
+    validateInformationSearchParams(apiName, params);
   }
 
   if (route.required) {
@@ -382,6 +413,25 @@ function applyDefaultPageSize(route, apiName, params) {
 
   delete params.page_size;
   params.page_size = pageSize;
+}
+
+function applyDefaultLimit(route, apiName, params) {
+  if (route.defaultLimit === undefined) return;
+
+  const value = params.limit;
+  if (value === undefined || value === null || value === '') {
+    params.limit = route.defaultLimit;
+    return;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${apiName} 参数 limit 必须为正整数`);
+  }
+  if (route.maxLimit !== undefined && parsed > route.maxLimit) {
+    throw new Error(`${apiName} 参数 limit 不能超过 ${route.maxLimit}`);
+  }
+  params.limit = parsed;
 }
 
 function pickFields(obj, fields) {
@@ -461,6 +511,59 @@ function normalizeEmptyData(result) {
   return result;
 }
 
+/**
+ * 将统一搜索接口的三类异构结果压平为固定结构，减少 Agent 解析分支与 token 消耗。
+ * 公告没有 market_sentiment_score，使用其有方向性的 stock_impact_score 作为统一情绪指数。
+ */
+function simplifyInformationSearchItems(items) {
+  if (items === null) return null;
+  if (!Array.isArray(items)) {
+    throw new Error('searchInformation 返回结构不合法: 预期为数组');
+  }
+
+  const idFields = {
+    news: 'news_id',
+    research: 'report_id',
+    announcement: 'announcement_id',
+  };
+  const dateFields = {
+    news: 'publish_time',
+    research: 'research_date',
+    announcement: 'announcement_date',
+  };
+  const analysisFields = {
+    news: 'news_analysis',
+    research: 'report_analysis',
+    announcement: 'announce_analysis',
+  };
+
+  return items.map((item) => {
+    const safeItem = item && typeof item === 'object' && !Array.isArray(item) ? item : {};
+    const data = safeItem.data && typeof safeItem.data === 'object' && !Array.isArray(safeItem.data)
+      ? safeItem.data
+      : {};
+    const scoring = data.global_scoring && typeof data.global_scoring === 'object'
+      ? data.global_scoring
+      : {};
+    const contentType = safeItem.content_type || null;
+    const idField = idFields[contentType];
+    const dateField = dateFields[contentType];
+    const analysisField = analysisFields[contentType];
+
+    return {
+      content_type: contentType,
+      hybrid_score: safeItem.hybrid_score ?? null,
+      id: idField ? (data[idField] ?? null) : null,
+      title: data.title ?? data.source_title ?? null,
+      publish_time: safeItem.publish_time ?? (dateField ? data[dateField] : null) ?? null,
+      summary: data.summary ?? null,
+      analysis: analysisField ? (data[analysisField] ?? null) : null,
+      importance_score: scoring.importance_score ?? null,
+      sentiment_score: scoring.market_sentiment_score ?? scoring.stock_impact_score ?? null,
+    };
+  });
+}
+
 async function callApi(apiName, params = {}) {
   const route = API_ROUTES[apiName];
   if (!route) {
@@ -472,6 +575,9 @@ async function callApi(apiName, params = {}) {
   const requestParams = { ...params };
   let fields = null;
   if (Object.prototype.hasOwnProperty.call(requestParams, 'fields')) {
+    if (route.allowFields === false) {
+      throw new Error(`${apiName} 不支持参数: fields. 可用参数: keyword, limit`);
+    }
     fields = requestParams.fields;
     delete requestParams.fields;
     if (fields !== null && fields !== undefined) {
@@ -489,6 +595,7 @@ async function callApi(apiName, params = {}) {
   // 写死内部参数（覆盖调用方）
   applyForced(route, requestParams);
   applyDefaultPageSize(route, apiName, requestParams);
+  applyDefaultLimit(route, apiName, requestParams);
 
   const url = buildUrl(route.path, requestParams);
   let body = null;
@@ -543,7 +650,8 @@ async function callApi(apiName, params = {}) {
   assertBusinessSuccess(result);
   normalizeEmptyData(result);
 
-  return unwrapResponse(filterFieldsInResponse(result, fields, route));
+  const unwrapped = unwrapResponse(filterFieldsInResponse(result, fields, route));
+  return apiName === 'searchInformation' ? simplifyInformationSearchItems(unwrapped) : unwrapped;
 }
 
 async function main() {

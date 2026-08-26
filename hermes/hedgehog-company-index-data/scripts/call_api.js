@@ -21,6 +21,28 @@ const API_KEY = loadApiKey();
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// ciwei-ai 对外字段名为 index_code / stock_code，但国内代码值来自 Tushare ts_code，必须带交易所后缀。
+const DOMESTIC_INDEX_CODES = [
+  '000001.SH', '000010.SH', '000016.SH', '000300.SH', '000510.SH', '000688.SH', '000850.SH',
+  '000905.SH', '399001.SZ', '399005.SZ', '399006.SZ', '399101.SZ', '399106.SZ', '899050.BJ',
+];
+
+// 按技能公开范围限制国际指数；国际指数使用 Tushare 专用代码，不带交易所后缀。
+const GLOBAL_INDEX_CODES = [
+  'XIN9', 'HSI', 'HKTECH', 'HKAH', 'DJI', 'SPX', 'IXIC', 'FTSE', 'FCHI', 'GDAXI',
+  'N225', 'KS11', 'AS51', 'SENSEX', 'IBOVESPA', 'TWII', 'CKLSE', 'SPTSX', 'CSX5P', 'RUT',
+];
+
+const DAILY_BASIC_INDEX_CODES = [
+  '000001.SH', '399001.SZ', '000016.SH', '000905.SH', '399005.SZ', '399006.SZ',
+];
+
+// Tushare index_weight 的入参名即 index_code；值为带交易所后缀的完整 TS 指数代码。
+const INDEX_WEIGHT_CODES = [
+  '000010.SH', '000016.SH', '000300.SH', '000510.SH', '000688.SH',
+  '000850.SH', '000905.SH', '399005.SZ', '899050.BJ',
+];
+
 // 公司类型 -> 字段裁剪集合（用于 *Detail 三个明细 Tool，脚本根据 comp_type 自动设置 fields）
 // 利润表明细字段集（按公司类型）：一级科目满足会计等式 + 重要二级科目
 const INCOME_DETAIL_FIELDS = {
@@ -54,6 +76,7 @@ const CASHFLOW_DETAIL_FIELDS = {
  *   method/path:    HTTP 方法和路径
  *   require:        必填字段数组（任一缺失直接报错）
  *   requireAny:     二维数组，每组中至少有一项必填
+ *   allowedParams:  技能对外公开的参数白名单；拒绝额外参数
  *   paramMap:       入参别名映射（skill 友好名 -> 后端字段名）
  *   defaults:       未传时填入的默认参数
  *   forced:         强制写死的参数（覆盖调用方传值，不对外暴露）
@@ -64,8 +87,14 @@ const CASHFLOW_DETAIL_FIELDS = {
  *     dateRange:         { startField, endField, maxDays }
  *     dynamicDateRange:  { startField, endField, default, sparse, threshold } fields数≤threshold时放宽maxDays
  *     maxStartAge:       { field, maxYears } 起始日期距今不超过 N 年
+ *     dateQueryMode:     单日全市场，或单代码+成对日期区间；两种模式严格二选一
+ *     allowedValues:     字段允许值白名单
+ *     patterns:          字段格式正则
  *   dynamicLimit:     { default, sparse, threshold } limit 参数动态值（基于 fields 字段数）
  *   dynamicPageSize:  { default, sparse, threshold } page_size 参数动态值（基于 fields 字段数）
+ *   boundedLimit:     对外可调但有上限的后端 limit
+ *   localLimit:       仅在脚本响应侧生效、不发送给后端的 limit
+ *   responseFilter:   响应 items[] 白名单过滤
  *   transform:        响应数据变换函数名（在 stripFields/filterFields 之前执行）
  */
 const API_ROUTES = {
@@ -312,6 +341,107 @@ const API_ROUTES = {
     require: ['base_date', 'offset'],
     defaults: { exchange: 'SSE' },
   },
+
+  // ===== Tool-16 上市公司详情 =====
+  queryStockCompany: {
+    method: 'GET',
+    path: '/v1/stock/company',
+    require: ['stock_code'],
+    allowedParams: ['stock_code', 'fields'],
+    saveOutput: true,
+    constraints: {
+      patterns: {
+        stock_code: { regex: /^\d{6}\.(SH|SZ|BJ)$/, description: '6位数字加交易所后缀，如 000001.SZ' },
+      },
+    },
+  },
+
+  // ===== Tool-17 指数基础信息 =====
+  queryIndexBasic: {
+    method: 'GET',
+    path: '/v1/index/basic',
+    requireAny: [['index_code', 'index_name', 'category']],
+    allowedParams: ['index_code', 'index_name', 'category', 'limit', 'fields'],
+    paramMap: { index_name: 'name' },
+    saveOutput: true,
+    localLimit: { default: 10, max: 50 },
+    responseFilter: { field: 'index_code', allowed: DOMESTIC_INDEX_CODES },
+    constraints: {
+      allowedValues: { index_code: DOMESTIC_INDEX_CODES },
+    },
+  },
+
+  // ===== Tool-18 国内指数日线 =====
+  queryIndexDaily: {
+    method: 'GET',
+    path: '/v1/index/daily',
+    allowedParams: ['trade_date', 'index_code', 'start_date', 'end_date', 'limit', 'fields'],
+    saveOutput: true,
+    forced: { page: 1 },
+    boundedLimit: { default: 252, max: 252 },
+    responseFilter: { field: 'index_code', allowed: DOMESTIC_INDEX_CODES },
+    constraints: {
+      allowedValues: { index_code: DOMESTIC_INDEX_CODES },
+      dateQueryMode: {
+        selectorField: 'index_code', singleDateField: 'trade_date',
+        startField: 'start_date', endField: 'end_date', maxCalendarYears: 1,
+      },
+    },
+  },
+
+  // ===== Tool-19 国际指数日线 =====
+  queryIndexGlobal: {
+    method: 'GET',
+    path: '/v1/index/global',
+    allowedParams: ['trade_date', 'index_code', 'start_date', 'end_date', 'limit', 'fields'],
+    saveOutput: true,
+    forced: { page: 1 },
+    boundedLimit: { default: 252, max: 252 },
+    responseFilter: { field: 'index_code', allowed: GLOBAL_INDEX_CODES },
+    constraints: {
+      allowedValues: { index_code: GLOBAL_INDEX_CODES },
+      dateQueryMode: {
+        selectorField: 'index_code', singleDateField: 'trade_date',
+        startField: 'start_date', endField: 'end_date', maxCalendarYears: 1,
+      },
+    },
+  },
+
+  // ===== Tool-20 大盘指数每日指标 =====
+  queryIndexDailyBasic: {
+    method: 'GET',
+    path: '/v1/index/daily-basic',
+    allowedParams: ['trade_date', 'index_code', 'start_date', 'end_date', 'limit', 'fields'],
+    saveOutput: true,
+    forced: { page: 1 },
+    boundedLimit: { default: 252, max: 252 },
+    responseFilter: { field: 'index_code', allowed: DAILY_BASIC_INDEX_CODES },
+    constraints: {
+      allowedValues: { index_code: DAILY_BASIC_INDEX_CODES },
+      dateQueryMode: {
+        selectorField: 'index_code', singleDateField: 'trade_date',
+        startField: 'start_date', endField: 'end_date', maxCalendarYears: 1,
+      },
+    },
+  },
+
+  // ===== Tool-21 指数成分和权重 =====
+  queryIndexWeight: {
+    method: 'GET',
+    path: '/v1/index/weight',
+    allowedParams: ['trade_date', 'index_code', 'start_date', 'end_date', 'limit', 'fields'],
+    saveOutput: true,
+    forced: { page: 1 },
+    boundedLimit: { default: 252, max: 252 },
+    responseFilter: { field: 'index_code', allowed: INDEX_WEIGHT_CODES },
+    constraints: {
+      allowedValues: { index_code: INDEX_WEIGHT_CODES },
+      dateQueryMode: {
+        selectorField: 'index_code', singleDateField: 'trade_date',
+        startField: 'start_date', endField: 'end_date', maxCalendarYears: 1,
+      },
+    },
+  },
 };
 
 function parseArgs(argv) {
@@ -374,6 +504,16 @@ function parseBody(raw, contentType) {
 
 function isEmpty(v) {
   return v === undefined || v === null || v === '';
+}
+
+function validateAllowedParams(route, apiName, params) {
+  if (!route.allowedParams) return;
+  const unknown = Object.keys(params).filter((key) => !route.allowedParams.includes(key));
+  if (unknown.length > 0) {
+    throw new Error(
+      `${apiName} 不支持参数: ${unknown.join(', ')}（允许参数：${route.allowedParams.join(', ')}）`
+    );
+  }
 }
 
 function applyRequired(route, apiName, params) {
@@ -463,8 +603,67 @@ function validateMaxStartAge(params, rule, apiName) {
   }
 }
 
+function validateAllowedValues(params, rules, apiName) {
+  if (!rules) return;
+  for (const [field, allowed] of Object.entries(rules)) {
+    if (isEmpty(params[field])) continue;
+    if (!allowed.includes(params[field])) {
+      throw new Error(`${apiName} 参数 ${field} 不支持: ${params[field]}（允许值：${allowed.join(', ')}）`);
+    }
+  }
+}
+
+function validatePatterns(params, rules, apiName) {
+  if (!rules) return;
+  for (const [field, rule] of Object.entries(rules)) {
+    if (isEmpty(params[field])) continue;
+    if (!rule.regex.test(String(params[field]))) {
+      throw new Error(`${apiName} 参数 ${field} 格式错误，应为${rule.description}: ${params[field]}`);
+    }
+  }
+}
+
+function validateDateQueryMode(params, rule, apiName) {
+  if (!rule) return;
+  const { selectorField, singleDateField, startField, endField, maxCalendarYears } = rule;
+  const hasSelector = !isEmpty(params[selectorField]);
+  const hasSingleDate = !isEmpty(params[singleDateField]);
+  const hasStart = !isEmpty(params[startField]);
+  const hasEnd = !isEmpty(params[endField]);
+
+  if (hasSingleDate) {
+    if (hasSelector || hasStart || hasEnd) {
+      throw new Error(
+        `${apiName} 查询模式二选一：单日仅传 ${singleDateField}，不得同时传 ${selectorField}/${startField}/${endField}`
+      );
+    }
+    parseDate(params[singleDateField], singleDateField, apiName);
+    return;
+  }
+
+  if (!hasSelector || !hasStart || !hasEnd) {
+    throw new Error(
+      `${apiName} 查询模式二选一：传 ${singleDateField}；或同时传 ${selectorField}、${startField}、${endField}`
+    );
+  }
+
+  const start = parseDate(params[startField], startField, apiName);
+  const end = parseDate(params[endField], endField, apiName);
+  if (end < start) {
+    throw new Error(`${apiName} 参数 ${endField} 不得早于 ${startField}`);
+  }
+  const maxEnd = new Date(start);
+  maxEnd.setUTCFullYear(maxEnd.getUTCFullYear() + maxCalendarYears);
+  if (end > maxEnd.getTime()) {
+    throw new Error(`${apiName} 参数 ${startField} 与 ${endField} 的范围最多 ${maxCalendarYears} 年`);
+  }
+}
+
 function applyConstraints(route, apiName, params, userFields) {
   if (!route.constraints) return;
+  validateAllowedValues(params, route.constraints.allowedValues, apiName);
+  validatePatterns(params, route.constraints.patterns, apiName);
+  validateDateQueryMode(params, route.constraints.dateQueryMode, apiName);
   if (route.constraints.maxStartAge) {
     validateMaxStartAge(params, route.constraints.maxStartAge, apiName);
   }
@@ -477,6 +676,35 @@ function applyConstraints(route, apiName, params, userFields) {
     const maxDays = (count > 0 && count <= dr.threshold) ? dr.sparse : dr.default;
     validateDateRange(params, { ...dr, maxDays }, apiName);
   }
+}
+
+function parsePositiveInt(value, fieldName, apiName) {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`${apiName} 参数 ${fieldName} 必须为正整数: ${value}`);
+  }
+  return parsed;
+}
+
+function takeLocalLimit(route, apiName, params) {
+  if (!route.localLimit) return null;
+  const raw = isEmpty(params.limit) ? route.localLimit.default : params.limit;
+  delete params.limit;
+  const limit = parsePositiveInt(raw, 'limit', apiName);
+  if (limit > route.localLimit.max) {
+    throw new Error(`${apiName} 参数 limit 最大为 ${route.localLimit.max}`);
+  }
+  return limit;
+}
+
+function applyBoundedLimit(route, apiName, params) {
+  if (!route.boundedLimit) return;
+  const raw = isEmpty(params.limit) ? route.boundedLimit.default : params.limit;
+  const limit = parsePositiveInt(raw, 'limit', apiName);
+  if (limit > route.boundedLimit.max) {
+    throw new Error(`${apiName} 参数 limit 最大为 ${route.boundedLimit.max}`);
+  }
+  params.limit = limit;
 }
 
 function applyForced(route, params) {
@@ -621,6 +849,25 @@ function stripFieldsInResponse(result, stripFields) {
   return result;
 }
 
+/** 仅保留指定字段值在白名单内的响应记录，用于限制技能公开的数据范围。 */
+function filterItemsInResponse(result, rule) {
+  if (!rule || !result || typeof result !== 'object' || result.data === undefined || result.data === null) {
+    return result;
+  }
+  const keep = (item) => item && rule.allowed.includes(item[rule.field]);
+  if (Array.isArray(result.data)) {
+    result.data = result.data.filter(keep);
+  } else if (result.data && typeof result.data === 'object' && Array.isArray(result.data.items)) {
+    result.data = { ...result.data, items: result.data.items.filter(keep) };
+  }
+  return result;
+}
+
+function applyLocalResponseLimit(result, limit) {
+  if (limit === null || limit === undefined || !Array.isArray(result)) return result;
+  return result.slice(0, limit);
+}
+
 /**
  * 响应数据变换函数注册表。
  * 变换在 stripFields / filterFields 之前执行，可直接操作原始字段计算派生值。
@@ -756,6 +1003,7 @@ async function callApi(apiName, params = {}) {
   }
 
   const requestParams = { ...params };
+  validateAllowedParams(route, apiName, requestParams);
 
   // 提取 fields（不参与请求，仅用于响应字段裁剪）
   let userFields = null;
@@ -763,6 +1011,9 @@ async function callApi(apiName, params = {}) {
     userFields = normalizeFields(requestParams.fields, apiName);
     requestParams.fields = userFields && userFields.length > 0 ? userFields.join(',') : '';
   }
+
+  // index/basic 后端不支持分页参数；limit 仅在响应侧执行，避免未知参数被服务端拒绝。
+  const localResponseLimit = takeLocalLimit(route, apiName, requestParams);
 
   // 必填项校验（基于 skill 友好的入参名，比如 stock_name）
   applyRequired(route, apiName, requestParams);
@@ -807,6 +1058,7 @@ async function callApi(apiName, params = {}) {
     const count = effectiveFields ? effectiveFields.length : 0;
     requestParams.page_size = (count > 0 && count <= dps.threshold) ? dps.sparse : dps.default;
   }
+  applyBoundedLimit(route, apiName, requestParams);
 
   const url = buildUrl(route.path, requestParams);
   let body = null;
@@ -870,12 +1122,14 @@ async function callApi(apiName, params = {}) {
   assertBusinessSuccess(result);
   normalizeEmptyData(result);
 
-  // 字段重命名 → 变换计算 → 剔除黑名单 → fields 白名单裁剪 → 穿透
+  // 字段重命名 → 变换计算 → 公开范围过滤 → 剔除黑名单 → fields 白名单裁剪 → 穿透
   const renamed = renameFieldsInResponse(result, route.renameMap || {});
   const transformed = applyTransform(renamed, route.transform);
-  const stripped = stripFieldsInResponse(transformed, route.stripFields);
+  const scopeFiltered = filterItemsInResponse(transformed, route.responseFilter);
+  normalizeEmptyData(scopeFiltered);
+  const stripped = stripFieldsInResponse(scopeFiltered, route.stripFields);
   const filtered = filterFieldsInResponse(stripped, effectiveFields);
-  return unwrapResponse(filtered);
+  return applyLocalResponseLimit(unwrapResponse(filtered), localResponseLimit);
 }
 
 async function main() {
