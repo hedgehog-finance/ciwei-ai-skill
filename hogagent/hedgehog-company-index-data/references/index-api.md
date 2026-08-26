@@ -35,7 +35,7 @@ Tool-18 至 Tool-21 的两种模式严格互斥：
 Tool-17 `queryIndexBasic` 与 Tool-18 `queryIndexDaily` 只接受或返回以下完整代码：
 
 ```text
-000001.SH  000010.SH  000016.SH  000300.SH  000510.SH  000688.SH  000850.SH
+000001.SH  000010.SH  000016.SH  000300.SH  000510.SH  000688.SH  000852.SH
 000905.SH  399001.SZ  399005.SZ  399006.SZ  399101.SZ  399106.SZ  899050.BJ
 ```
 
@@ -47,15 +47,17 @@ Tool-17 `queryIndexBasic` 与 Tool-18 `queryIndexDaily` 只接受或返回以下
 |---|---|---|---|
 | 沪深300 | `000300.SH` | `399300.SZ` | `000300.SH` |
 | 中证500 | `000905.SH` | `399905.SZ` | `000905.SH` |
+| 中证1000 | `000852.SH` | `399852.SZ` | `000852.SH` |
 
-用户提供 `399300.SZ` 或 `399905.SZ` 时，Agent 应映射为最后一列后查询；这两个深圳行情代码本身不在 ciwei-ai 白名单内，不得原样传给接口。
+中证指数公司编制方案中的原始代码写作 `000852/399852`；按 ciwei-ai 使用的完整 TS 格式分别补为 `000852.SH/399852.SZ`。
+
+用户提供 `399300.SZ`、`399905.SZ` 或 `399852.SZ` 时，Agent 应映射为最后一列后查询；这些深圳行情代码本身不在 ciwei-ai 白名单内，不得原样传给接口。
 
 不得根据数字或后缀相似性猜测对应关系：
 
 | 代码一 | 指数一 | 代码二 | 指数二 |
 |---|---|---|---|
 | `000001.SH` | 上证综指 | `399001.SZ` | 深证成指 |
-| `000850.SH` | 沪深300有色金属指数（300有色） | `399850.SZ` | 深证50 |
 
 其余白名单代码按本文完整值原样使用。没有列入对应表就不转换，例如不得自行构造 `399510.SZ`。新增映射前必须核实指数名称和编制方。
 
@@ -103,7 +105,7 @@ Tushare 原生参数和 ciwei-ai 参数都叫 `index_code`，参数值是带后�
 
 ```text
 000010.SH  000016.SH  000300.SH  000510.SH  000688.SH
-000850.SH  000905.SH  399005.SZ  899050.BJ
+000852.SH  000905.SH  399005.SZ  899050.BJ
 ```
 
 返回的 `con_code` 是带交易所后缀的成分证券 TS 代码，例如 `600519.SH`。权重数据为月度数据；默认 252 条可能被截断，不得把结果默认描述为完整成分股名单。
@@ -117,4 +119,3 @@ Tushare 原生参数和 ciwei-ai 参数都叫 `index_code`，参数值是带后�
 | `queryIndexGlobal` | `index_code, trade_date, open, high, low, close, pre_close, change, pct_chg, swing, vol, amount` | 多数国际指数的 `vol`、`amount` 可能为空 |
 | `queryIndexDailyBasic` | `index_code, trade_date, total_mv, float_mv, total_share, float_share, free_share, turnover_rate, turnover_rate_f, pe, pe_ttm, pb` | 市值为元，股本为股，换手率为百分比 |
 | `queryIndexWeight` | `index_code, trade_date, con_code, weight` | `weight` 为百分比 |
-

@@ -37,7 +37,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 // ciwei-ai 对外字段名为 index_code / stock_code，但国内代码值来自 Tushare ts_code，必须带交易所后缀。
 const DOMESTIC_INDEX_CODES = [
-  '000001.SH', '000010.SH', '000016.SH', '000300.SH', '000510.SH', '000688.SH', '000850.SH',
+  '000001.SH', '000010.SH', '000016.SH', '000300.SH', '000510.SH', '000688.SH', '000852.SH',
   '000905.SH', '399001.SZ', '399005.SZ', '399006.SZ', '399101.SZ', '399106.SZ', '899050.BJ',
 ];
 
@@ -54,7 +54,7 @@ const DAILY_BASIC_INDEX_CODES = [
 // Tushare index_weight 的入参名即 index_code；值为带交易所后缀的完整 TS 指数代码。
 const INDEX_WEIGHT_CODES = [
   '000010.SH', '000016.SH', '000300.SH', '000510.SH', '000688.SH',
-  '000850.SH', '000905.SH', '399005.SZ', '899050.BJ',
+  '000852.SH', '000905.SH', '399005.SZ', '899050.BJ',
 ];
 
 // 公司类型 -> 字段裁剪集合（用于 *Detail 三个明细 Tool，脚本根据 comp_type 自动设置 fields）
