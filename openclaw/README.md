@@ -1,6 +1,6 @@
 # OpenClaw Skills
 
-A collection of skills adapted for the OpenClaw platform, containing 20 skill modules. Includes all HogAgent core investment research skills plus 11 additional ones (`deliver_files`, `hog-memory`, and 9 extra utility tools).
+A collection of skills adapted for the OpenClaw platform, containing 21 skill modules. Includes all HogAgent core investment research skills plus 11 additional ones (`deliver_files`, `hog-memory`, and 9 extra utility tools).
 
 ## Skill List
 
@@ -10,6 +10,7 @@ A collection of skills adapted for the OpenClaw platform, containing 20 skill mo
 |-------|---------|-------------|
 | `hedgehog-company-index-data` | 1.10.0 | Query A-share company profiles, daily/minute quotes and financials, domestic/global index quotes and weights, Shenwan industry data, and trading calendars |
 | `hedgehog-daily-morning-briefing` | 2.2.5 | Pre-market intelligence brief — filters macro, sector and watchlist news to extract core logic |
+| `hedgehog-financial-report-analysis` | 1.2.0 | Financial report interpretation focused on accounting changes, financial quality, audit notes, cash flow and risk |
 | `deliver_files` | 1.0.0 | Gateway General MCP Server CLI: deliver downloadable files to the user in batch |
 | `hog-gateway-tools` | 2.0.1 | Gateway General MCP Server CLI: task result reporting, work context, notifications, watchlist, resource recommendation, workflow push |
 | `hedgehog-in-depth-analysis` | 2.2.2 | Probability-tree scenario analysis for major events (macro volatility / black swans / geopolitics / policy shifts), predicting high-probability paths and measuring market impact |

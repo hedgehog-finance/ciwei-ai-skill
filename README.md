@@ -19,9 +19,9 @@ hedgehog-skills/
 
 | Platform | Directory | Skills | Description |
 |----------|-----------|--------|-------------|
-| **HogAgent** | `hogagent/` | 9 | Core A-share investment research skills |
-| **OpenClaw** | `openclaw/` | 20 | All HogAgent skills + 11 additional utility skills |
-| **Hermes** | `hermes/` | 20 | OpenClaw-equivalent skill set with Hermes-native secrets and Node.js prerequisites |
+| **HogAgent** | `hogagent/` | 10 | Core A-share investment research skills |
+| **OpenClaw** | `openclaw/` | 21 | All HogAgent skills + 11 additional utility skills |
+| **Hermes** | `hermes/` | 21 | OpenClaw-equivalent skill set with Hermes-native secrets and Node.js prerequisites |
 | **Optional** | `optional/` | 3 | Rich PPT generation and global market data extensions |
 
 ## Skills Overview
@@ -32,6 +32,7 @@ hedgehog-skills/
 |-------|---------|-------------|
 | `hedgehog-company-index-data` | 1.10.0 | Query A-share company profiles, daily/minute quotes and financials, domestic/global index quotes and weights, Shenwan industry data, and trading calendars |
 | `hedgehog-daily-morning-briefing` | 2.2.5 | Pre-market intelligence brief — filters macro, sector and watchlist news to extract core logic |
+| `hedgehog-financial-report-analysis` | 1.2.0 | Financial report interpretation focused on accounting changes, financial quality, audit notes, cash flow and risk |
 | `hog-gateway-tools` | 2.0.1 | Gateway General MCP Server CLI: task result reporting, work context, notifications, watchlist, resource recommendation, workflow push |
 | `hedgehog-in-depth-analysis` | 2.2.2 | Probability-tree scenario analysis for major events (macro volatility / black swans / geopolitics / policy shifts), predicting high-probability paths and measuring market impact |
 | `hedgehog-information-verification` | 2.2.2 | Cross-validate market rumors and unconfirmed news via multi-source verification, quantifying confidence scores to prevent misinformation-driven decisions |
