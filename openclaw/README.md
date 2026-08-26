@@ -8,7 +8,7 @@ A collection of skills adapted for the OpenClaw platform, containing 20 skill mo
 
 | Skill | Version | Description |
 |-------|---------|-------------|
-| `hedgehog-company-index-data` | 1.9.0 | Query A-share company profiles and financials, domestic/global index quotes and weights, Shenwan industry data, and trading calendars |
+| `hedgehog-company-index-data` | 1.10.0 | Query A-share company profiles, daily/minute quotes and financials, domestic/global index quotes and weights, Shenwan industry data, and trading calendars |
 | `hedgehog-daily-morning-briefing` | 2.2.5 | Pre-market intelligence brief — filters macro, sector and watchlist news to extract core logic |
 | `deliver_files` | 1.0.0 | Gateway General MCP Server CLI: deliver downloadable files to the user in batch |
 | `hog-gateway-tools` | 2.0.1 | Gateway General MCP Server CLI: task result reporting, work context, notifications, watchlist, resource recommendation, workflow push |

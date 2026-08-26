@@ -88,11 +88,13 @@ const CASHFLOW_DETAIL_FIELDS = {
  *     dynamicDateRange:  { startField, endField, default, sparse, threshold } fields数≤threshold时放宽maxDays
  *     maxStartAge:       { field, maxYears } 起始日期距今不超过 N 年
  *     dateQueryMode:     单日全市场，或单代码+成对日期区间；两种模式严格二选一
+ *     minuteTimeQueryMode: 单日，或成对分钟时间区间；两种模式严格二选一
  *     allowedValues:     字段允许值白名单
  *     patterns:          字段格式正则
  *   dynamicLimit:     { default, sparse, threshold } limit 参数动态值（基于 fields 字段数）
  *   dynamicPageSize:  { default, sparse, threshold } page_size 参数动态值（基于 fields 字段数）
  *   boundedLimit:     对外可调但有上限的后端 limit
+ *   minuteQuery:      分钟频率对应的日期上限、公开 limit、源频率和源数据放大倍数
  *   localLimit:       仅在脚本响应侧生效、不发送给后端的 limit
  *   responseFilter:   响应 items[] 白名单过滤
  *   transform:        响应数据变换函数名（在 stripFields/filterFields 之前执行）
@@ -119,6 +121,35 @@ const API_ROUTES = {
     constraints: {
       maxStartAge: { field: 'start_date', maxYears: 10 },
       dateRange: { startField: 'start_date', endField: 'end_date', maxDays: 365 * 2 },
+    },
+  },
+
+  // ===== Tool-2b 股票分钟行情 =====
+  queryStockMinute: {
+    method: 'GET',
+    path: '/v1/stock/minute',
+    require: ['stock_code'],
+    allowedParams: ['stock_code', 'freq', 'trade_date', 'start_time', 'end_time', 'limit', 'fields'],
+    defaults: { freq: '1MIN' },
+    saveOutput: true,
+    forced: { page: 1, order_by: 'trade_time_desc' },
+    minuteQuery: {
+      defaultLimit: { '1MIN': 240, '5MIN': 240, '30MIN': 100, '1H': 100 },
+      maxLimit: { '1MIN': 500, '5MIN': 500, '30MIN': 166, '1H': 111 },
+      source: {
+        '30MIN': { freq: '5MIN', limitMultiplier: 6 },
+        '1H': { freq: '5MIN', limitMultiplier: 9 },
+      },
+    },
+    constraints: {
+      allowedValues: { freq: ['1MIN', '5MIN', '30MIN', '1H'] },
+      patterns: {
+        stock_code: { regex: /^\d{6}\.(SH|SZ|BJ)$/, description: '6位数字加交易所后缀，如 000001.SZ' },
+      },
+      minuteTimeQueryMode: {
+        freqField: 'freq', singleDateField: 'trade_date', startField: 'start_time', endField: 'end_time',
+        maxDaysByFreq: { '1MIN': 31, '5MIN': 31, '30MIN': 92, '1H': 123 },
+      },
     },
   },
 
@@ -572,6 +603,24 @@ function parseDate(value, fieldName, apiName) {
   return t;
 }
 
+function parseDateTime(value, fieldName, apiName) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
+    throw new Error(`${apiName} 参数 ${fieldName} 时间格式必须为 YYYY-MM-DD HH:mm:ss: ${value}`);
+  }
+  const [datePart, timePart] = value.split(' ');
+  const [year, month, day] = datePart.split('-').map(Number);
+  const [hour, minute, second] = timePart.split(':').map(Number);
+  const t = Date.UTC(year, month - 1, day, hour, minute, second);
+  const d = new Date(t);
+  if (
+    d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day ||
+    d.getUTCHours() !== hour || d.getUTCMinutes() !== minute || d.getUTCSeconds() !== second
+  ) {
+    throw new Error(`${apiName} 参数 ${fieldName} 时间不合法: ${value}`);
+  }
+  return t;
+}
+
 function validateDateRange(params, rule, apiName) {
   const { startField, endField, maxDays } = rule;
   const sv = params[startField];
@@ -659,11 +708,46 @@ function validateDateQueryMode(params, rule, apiName) {
   }
 }
 
+function validateMinuteTimeQueryMode(params, rule, apiName) {
+  if (!rule) return;
+  const { freqField, singleDateField, startField, endField, maxDaysByFreq } = rule;
+  const hasSingleDate = !isEmpty(params[singleDateField]);
+  const hasStart = !isEmpty(params[startField]);
+  const hasEnd = !isEmpty(params[endField]);
+
+  if (hasSingleDate) {
+    if (hasStart || hasEnd) {
+      throw new Error(
+        `${apiName} 查询模式二选一：传 ${singleDateField}；或同时传 ${startField}、${endField}`
+      );
+    }
+    parseDate(params[singleDateField], singleDateField, apiName);
+    return;
+  }
+
+  if (!hasStart || !hasEnd) {
+    throw new Error(
+      `${apiName} 查询模式二选一：传 ${singleDateField}；或同时传 ${startField}、${endField}`
+    );
+  }
+
+  const start = parseDateTime(params[startField], startField, apiName);
+  const end = parseDateTime(params[endField], endField, apiName);
+  if (end < start) {
+    throw new Error(`${apiName} 参数 ${endField} 不得早于 ${startField}`);
+  }
+  const maxDays = maxDaysByFreq[params[freqField]];
+  if (end - start > maxDays * DAY_MS) {
+    throw new Error(`${apiName} 参数 ${startField} 与 ${endField} 的范围最多 ${maxDays} 天`);
+  }
+}
+
 function applyConstraints(route, apiName, params, userFields) {
   if (!route.constraints) return;
   validateAllowedValues(params, route.constraints.allowedValues, apiName);
   validatePatterns(params, route.constraints.patterns, apiName);
   validateDateQueryMode(params, route.constraints.dateQueryMode, apiName);
+  validateMinuteTimeQueryMode(params, route.constraints.minuteTimeQueryMode, apiName);
   if (route.constraints.maxStartAge) {
     validateMaxStartAge(params, route.constraints.maxStartAge, apiName);
   }
@@ -705,6 +789,28 @@ function applyBoundedLimit(route, apiName, params) {
     throw new Error(`${apiName} 参数 limit 最大为 ${route.boundedLimit.max}`);
   }
   params.limit = limit;
+}
+
+function prepareMinuteQuery(route, apiName, params) {
+  if (!route.minuteQuery) return null;
+  const requestedFreq = params.freq;
+  const defaultLimit = route.minuteQuery.defaultLimit[requestedFreq];
+  const maxLimit = route.minuteQuery.maxLimit[requestedFreq];
+  const requestedLimit = parsePositiveInt(isEmpty(params.limit) ? defaultLimit : params.limit, 'limit', apiName);
+  if (requestedLimit > maxLimit) {
+    throw new Error(`${apiName} 参数 limit 在 ${requestedFreq} 频率下最大为 ${maxLimit}`);
+  }
+
+  const source = route.minuteQuery.source[requestedFreq] || { freq: requestedFreq, limitMultiplier: 1 };
+  params.freq = source.freq;
+  params.limit = requestedLimit * source.limitMultiplier;
+  return {
+    requestedFreq,
+    requestedLimit,
+    sourceFreq: source.freq,
+    limitMultiplier: source.limitMultiplier,
+    aggregate: requestedFreq !== source.freq,
+  };
 }
 
 function applyForced(route, params) {
@@ -913,6 +1019,85 @@ function applyTransform(result, transformName) {
   return TRANSFORMS[transformName](result);
 }
 
+function minuteBucketEnd(tradeTime, freq) {
+  const match = String(tradeTime || '').match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2}):(\d{2})/
+  );
+  if (!match) return null;
+  const [, date, hourText, minuteText] = match;
+  const minuteOfDay = Number(hourText) * 60 + Number(minuteText);
+  const step = freq === '30MIN' ? 30 : 60;
+  let sessionStart;
+  if (minuteOfDay >= 9 * 60 + 30 && minuteOfDay <= 11 * 60 + 30) {
+    sessionStart = 9 * 60 + 30;
+  } else if (minuteOfDay >= 13 * 60 && minuteOfDay <= 15 * 60) {
+    sessionStart = 13 * 60;
+  } else {
+    return null;
+  }
+  const bucketNumber = Math.max(1, Math.ceil((minuteOfDay - sessionStart) / step));
+  const endMinute = sessionStart + bucketNumber * step;
+  const endHourText = String(Math.floor(endMinute / 60)).padStart(2, '0');
+  const endMinuteText = String(endMinute % 60).padStart(2, '0');
+  return `${date}T${endHourText}:${endMinuteText}:00`;
+}
+
+function minuteSortKey(tradeTime) {
+  const match = String(tradeTime || '').match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/
+  );
+  return match ? `${match[1]}T${match[2]}` : '';
+}
+
+function aggregateMinuteItems(items, context) {
+  if (!context || !context.aggregate || !Array.isArray(items)) return items;
+  const groups = new Map();
+  for (const item of items) {
+    const bucketEnd = minuteBucketEnd(item.trade_time, context.requestedFreq);
+    if (!bucketEnd) continue;
+    const key = `${item.stock_code}|${bucketEnd}`;
+    if (!groups.has(key)) groups.set(key, { bucketEnd, rows: [] });
+    groups.get(key).rows.push(item);
+  }
+
+  const bars = [];
+  for (const group of groups.values()) {
+    const rows = group.rows.sort((a, b) => minuteSortKey(a.trade_time).localeCompare(minuteSortKey(b.trade_time)));
+    const first = rows[0];
+    const last = rows[rows.length - 1];
+    const expectedSourceBars = context.requestedFreq === '30MIN' ? 6 : 12;
+    const closedBucket = minuteSortKey(last.trade_time) === group.bucketEnd;
+    // 倒序源数据可能在最老的桶中途被 limit 截断；已收盘桶不完整时宁可少返回，也不生成错误 OHLC。
+    if (closedBucket && rows.length < expectedSourceBars) continue;
+    bars.push({
+      stock_code: first.stock_code,
+      freq: context.requestedFreq,
+      trade_time: group.bucketEnd,
+      open: first.open,
+      close: last.close,
+      high: Math.max(...rows.map((row) => Number(row.high))),
+      low: Math.min(...rows.map((row) => Number(row.low))),
+      vol: round4(rows.reduce((sum, row) => sum + Number(row.vol), 0)),
+      amount: round4(rows.reduce((sum, row) => sum + Number(row.amount), 0)),
+    });
+  }
+  bars.sort((a, b) => minuteSortKey(b.trade_time).localeCompare(minuteSortKey(a.trade_time)));
+  return bars.slice(0, context.requestedLimit);
+}
+
+function aggregateMinuteResponse(result, context) {
+  if (!context || !context.aggregate || !result || typeof result !== 'object' || result.data == null) {
+    return result;
+  }
+  if (Array.isArray(result.data)) {
+    result.data = aggregateMinuteItems(result.data, context);
+  } else if (typeof result.data === 'object' && Array.isArray(result.data.items)) {
+    const items = aggregateMinuteItems(result.data.items, context);
+    result.data = { ...result.data, total: items.length, page: 1, page_size: context.requestedLimit, items };
+  }
+  return result;
+}
+
 function assertBusinessSuccess(result) {
   if (!result || typeof result !== 'object' || !Object.prototype.hasOwnProperty.call(result, 'code')) {
     return;
@@ -1003,6 +1188,7 @@ async function callApi(apiName, params = {}) {
   }
 
   const requestParams = { ...params };
+  let minuteQueryContext = null;
   validateAllowedParams(route, apiName, requestParams);
 
   // 提取 fields（不参与请求，仅用于响应字段裁剪）
@@ -1058,6 +1244,7 @@ async function callApi(apiName, params = {}) {
     const count = effectiveFields ? effectiveFields.length : 0;
     requestParams.page_size = (count > 0 && count <= dps.threshold) ? dps.sparse : dps.default;
   }
+  minuteQueryContext = prepareMinuteQuery(route, apiName, requestParams);
   applyBoundedLimit(route, apiName, requestParams);
 
   const url = buildUrl(route.path, requestParams);
@@ -1122,10 +1309,11 @@ async function callApi(apiName, params = {}) {
   assertBusinessSuccess(result);
   normalizeEmptyData(result);
 
-  // 字段重命名 → 变换计算 → 公开范围过滤 → 剔除黑名单 → fields 白名单裁剪 → 穿透
+  // 字段重命名 → 变换计算 → 分钟聚合 → 公开范围过滤 → 剔除黑名单 → fields 白名单裁剪 → 穿透
   const renamed = renameFieldsInResponse(result, route.renameMap || {});
   const transformed = applyTransform(renamed, route.transform);
-  const scopeFiltered = filterItemsInResponse(transformed, route.responseFilter);
+  const minuteAggregated = aggregateMinuteResponse(transformed, minuteQueryContext);
+  const scopeFiltered = filterItemsInResponse(minuteAggregated, route.responseFilter);
   normalizeEmptyData(scopeFiltered);
   const stripped = stripFieldsInResponse(scopeFiltered, route.stripFields);
   const filtered = filterFieldsInResponse(stripped, effectiveFields);

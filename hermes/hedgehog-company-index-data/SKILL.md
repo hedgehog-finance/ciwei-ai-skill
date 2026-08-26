@@ -1,11 +1,11 @@
 ---
 name: hedgehog-company-index-data
 description: >
-  Query A-share listed company and index data: stock/company profiles, daily quotes, fundamentals,
+  Query A-share listed company and index data: stock/company profiles, daily and minute quotes, fundamentals,
   capital flow, financial statements, ratios, audit opinions, main business composition; domestic index
   profiles/daily metrics/constituent weights, global index daily quotes; Shenwan industry data and trading calendar utilities.
   NOT for: macro data (→ hedgehog-macro-industry-data); news/announcements.
-version: 1.9.0
+version: 1.10.0
 metadata:
   hermes:
     tags: [finance, a-share, company-data]
@@ -75,6 +75,7 @@ hermes config set CIWEIAI_API_KEY "your-api-key-here"
 |---|---|---|---|
 | Tool-1 | `getStockBasic` | 股票基础信息、名称转代码 | `stock_code` 或 `stock_name` |
 | Tool-2 | `queryStockDaily` | 个股日线价量 | `stock_code` |
+| Tool-2b | `queryStockMinute` | 个股 1/5/30 分钟及 1 小时行情 | `stock_code` + `trade_date` 或时间区间 |
 | Tool-3 | `queryDailyBasic` | 个股每日 PE/PB/市值 | `stock_code` |
 | Tool-4 | `queryMoneyflow` | 个股大小单资金流向 | `stock_code` |
 | Tool-5 | `queryIncome` | 利润表汇总 | `stock_code` |

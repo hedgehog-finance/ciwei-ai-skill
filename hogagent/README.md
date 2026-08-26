@@ -6,7 +6,7 @@ A collection of A-share investment research skills adapted for the HogAgent plat
 
 | Skill | Version | Description |
 |-------|---------|-------------|
-| `hedgehog-company-index-data` | 1.9.0 | Query A-share company profiles and financials, domestic/global index quotes and weights, Shenwan industry data, and trading calendars |
+| `hedgehog-company-index-data` | 1.10.0 | Query A-share company profiles, daily/minute quotes and financials, domestic/global index quotes and weights, Shenwan industry data, and trading calendars |
 | `hedgehog-daily-morning-briefing` | 2.2.5 | Pre-market intelligence brief — filters macro, sector and watchlist news to extract core logic |
 | `hog-gateway-tools` | 2.0.1 | Gateway General MCP Server CLI: task result reporting, work context, notifications, watchlist, resource recommendation, workflow push |
 | `hedgehog-in-depth-analysis` | 2.2.2 | Probability-tree scenario analysis for major events (macro volatility / black swans / geopolitics / policy shifts), predicting high-probability paths and measuring market impact |
