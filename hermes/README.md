@@ -29,7 +29,7 @@ Skills requiring `npm install`: `company-valuation`, `doc-convert`, `fin-calc`, 
 | `hedgehog-macro-industry-data` | 1.7.0 | Query China-US macro data: Shibor, LPR, CPI, PPI, PMI, M0/M1/M2, social financing, US Treasury yields |
 | `hog-memory` | 1.2.0 | Cross-session persistent memory CLI: save, search and recall market insights and research conclusions |
 | `hedgehog-news-reports` | 1.8.0 | Unified search and analysis across financial news, A-share research reports, and listed company announcements |
-| `hedgehog-stock-research` | 2.2.6 | Multi-dimensional individual stock analysis: fundamentals, sentiment, and technicals analysts + CIO integration for final research report |
+| `hedgehog-stock-research` | 2.2.7 | Multi-dimensional individual stock analysis: fundamentals, sentiment, and technicals analysts + CIO integration for final research report |
 
 ### Authentication
 
