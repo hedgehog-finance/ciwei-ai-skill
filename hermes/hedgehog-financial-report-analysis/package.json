@@ -1,10 +1,10 @@
 {
   "name": "hedgehog-financial-report-analysis",
   "license": "GPL-3.0",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "type": "commonjs",
-  "description": "Financial analysis of A-share periodic reports using official announcements, notes, audit opinions and historical statement data.",
+  "description": "Financial analysis of A-share periodic reports with context-aware anomaly interpretation, audit notes and historical statement data.",
   "engines": {
     "node": ">=18"
   }
