@@ -1,10 +1,10 @@
 {
   "name": "hog-gateway-tools",
   "license": "GPL-3.0",
-  "version": "2.0.1",
+  "version": "3.4.0",
   "private": true,
   "type": "module",
-  "description": "Gateway General MCP Server CLI. Report task results, get work context, send notifications, read the watchlist, recommend resources, push workflows and list extensions via HTTP JSON-RPC.",
+  "description": "Gateway General MCP 2026-07-28 CLI with named workflow, file delivery, knowledge, memory and durable task operations.",
   "bin": {
     "hog-gateway-tools": "cli.mjs"
   },

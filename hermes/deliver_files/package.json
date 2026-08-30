@@ -1,10 +1,10 @@
 {
   "name": "deliver_files",
   "license": "GPL-3.0",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Deliver downloadable files to the user in batch via the Hedgehog Gateway General MCP Server over HTTP JSON-RPC.",
+  "description": "Deliver downloadable workspace files through authenticated Gateway General MCP 2026-07-28 resource links.",
   "bin": {
     "deliver_files": "cli.mjs"
   },

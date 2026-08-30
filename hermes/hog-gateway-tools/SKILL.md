@@ -1,244 +1,139 @@
 ---
 name: hog-gateway-tools
-version: 2.0.1
+version: 3.4.0
 description: >
-    Interact with the Hedgehog Gateway via its General MCP Server: report workflow
-    task results, fetch work/task context, send notifications, read the user's
-    watchlist, recommend resources, push workflow definitions and list installed
-    extensions. Use for agent-to-Gateway orchestration tasks.
+    Call authenticated Hedgehog Gateway General MCP capabilities, including
+    workflow reporting, restricted workspace file delivery, Work context and Task status, knowledge-base retrieval,
+    cross-session memory retrieval and authorized save/update operations, notifications,
+    watchlists, resource recommendations, and durable MCP task polling.
+    Use for Agent-to-Gateway orchestration, delivering existing artifacts, KB queries,
+    or persistent memory.
 compatibility: Requires Node.js >=18 in the Hermes terminal runtime.
 prerequisites:
   commands: [node]
 ---
 
-# Gateway 通用工具 (General MCP)
+# Gateway General MCP Tools
 
-封装 Gateway **General MCP Server**（`hedgehog-general-mcp`）暴露的工具，提供任务编排、通知推送、自选股读取、资料推荐等 Agent 与 Gateway 协作能力。所有调用通过 HTTP JSON-RPC 2.0 与 Gateway 交互。
+Use this Skill to call the Gateway General MCP `2026-07-28` endpoint. The CLI supplies the required modern MCP headers and `_meta` envelope, preserves structured results and Resource Links, and handles the `io.modelcontextprotocol/tasks` lifecycle.
 
-## 运行环境
+## Connection and authentication
 
-- **Node.js**: >=18（仅使用内置模块，无外部依赖）
-
-## MCP 端点发现优先级
-
-CLI 按以下优先级定位 Gateway General MCP Server：
-1. `--url <url>` 命令行参数（最高优先级）
-2. 环境变量 `HEDGEHOG_MCP_GENERAL_URL`
-3. `~/.hogagent/hogagent.json` 的 `gateway.mcpGeneralUrl` 字段
-4. 默认 `http://127.0.0.1:59102`
-
-## 使用方法
-
-所有操作通过 Node.js 脚本 CLI 执行。在 Bash 中运行（`${HERMES_SKILL_DIR}` 替换为本技能实际安装路径）：
+When General MCP is enabled, Gateway injects both variables into managed Agent runtimes. Its reserved
+`agent-runtime` Profile includes every named command in this Skill, including
+Knowledge read, Memory read/write, and dedicated file-delivery permissions, so a managed Agent must not
+create or paste a separate MCP client Token:
 
 ```bash
-node ${HERMES_SKILL_DIR}/cli.mjs <command> [args] [--url http://127.0.0.1:59102]
+export HEDGEHOG_MCP_GENERAL_URL=http://127.0.0.1:59102/mcp
+export HEDGEHOG_MCP_GENERAL_TOKEN=hgmcp_...
 ```
 
-## 命令一览
+For an external client, create a suitable MCP Token/Profile in the standalone MCP Clients card in Gateway settings. Prefer the environment variable for the token; `--token` is available for one-off calls but can remain in shell history.
 
-| 命令 | 对应 MCP 工具 | 说明 |
-|---|---|---|
-| `report-task-result` | `report_task_result` | 上报工作流任务执行结果 |
-| `get-work-context` | `get_work_context` | 获取 work/task 上下文 |
-| `send-notification` | `send_notification` | 发送通知事件 |
-| `get-watchlist` | `get_watchlist` | 读取用户自选股列表 |
-| `recommend-resource` | `recommend_resource` | 推送资料推荐待用户审阅 |
-| `push-workflow` | `push_workflow` | 向编排器推送工作流定义 |
-| `list-extensions` | `list_extensions` | 列出已安装扩展（skill/mcp） |
-| `call` | 任意工具 | 通用逃生舱：传原始 JSON 参数 |
+Endpoint priority:
 
-## 参数说明
+1. `--url`
+2. `HEDGEHOG_MCP_GENERAL_URL`
+3. `gateway.mcpGeneralUrl` in `~/.hogagent/hogagent.json`
+4. `http://127.0.0.1:59102/mcp`
 
-### report-task-result — 上报任务结果
+Token priority is `--token`, then `HEDGEHOG_MCP_GENERAL_TOKEN`. The URL must use HTTP(S), must not embed credentials, and must resolve to `/mcp`.
+
+Tool visibility is Profile-scoped. Not every command below is available to every Token; a forbidden named command must not be retried with another identity.
+
+Tool discovery, generic arbitrary tool calls, `push_workflow`, `list_extensions`, KB type discovery, Memory delete/list, and direct MCP Task get/update/cancel operations are intentionally outside this Skill. The authenticated principal determines the user for Knowledge and Memory operations; `--user-id` is rejected.
+
+## Commands
+
+Run commands with Node.js 18 or newer:
 
 ```bash
-node ${HERMES_SKILL_DIR}/cli.mjs report-task-result <task_id> --content "任务输出" --summary "摘要" \
-  --delivery-files-json '[{"name":"report.pdf","path":"tasks/abc/report.pdf","summary":"报告"}]'
+node ${HERMES_SKILL_DIR}/cli.mjs <command> [arguments]
 ```
 
-| 参数 | 必填 | 说明 |
-|---|---|---|
-| `<task_id>` (位置参数) | 是 | 任务 ID |
-| `--content C` | 否 | 任务内容输出 |
-| `--summary S` | 否 | 任务摘要 |
-| `--delivery-files-json '<json>'` | 否 | 交付文件数组 `[{name, path, summary?}]` |
+| Command | Gateway operation |
+|---|---|
+| `report-task-result` | Call `report_task_result` |
+| `deliver-files` | Call `deliver_files` and return owner-restricted Resource Links |
+| `get-work-context` | Call `get_work_context` |
+| `get-task-status` | Read `hedgehog://tasks/{id}` for one business Task's status, result, and deliveries |
+| `send-notification` | Call `send_notification` |
+| `get-watchlist` | Read the authenticated user's watchlist |
+| `recommend-resource` | Call `recommend_resource` |
+| `kb-search` | Search Knowledge through `knowledge_search` |
+| `kb-get` | Read `hedgehog://knowledge/items/{id}` |
+| `memory-save` | Create a persistent Memory through `memory_write` |
+| `memory-search` | Search Memory through `memory_search` |
+| `memory-recall` | Read `hedgehog://memories/{id}` |
+| `memory-update` | Call `memory_update` |
 
-**输出 JSON**：
+Use `--help` for the complete CLI syntax.
 
-```json
-{ "success": true, "task_id": "abc" }
-```
-
-WorkEngine 未启用时报错。
-
-### get-work-context — 获取工作上下文
+### Common calls
 
 ```bash
-node ${HERMES_SKILL_DIR}/cli.mjs get-work-context <work_id> --task-id <task_id>
+node ${HERMES_SKILL_DIR}/cli.mjs report-task-result task-123 \
+  --content "Task output" --summary "Summary" \
+  --delivery-files-json '[{"name":"report.pdf","path":"tasks/task-123/report.pdf","summary":"Report"}]'
+
+node ${HERMES_SKILL_DIR}/cli.mjs deliver-files tasks/task-123/report.pdf tasks/task-123/chart.png \
+  --summary "Analysis artifacts" --task-id task-123
+node ${HERMES_SKILL_DIR}/cli.mjs deliver-files --files-json \
+  '[{"path":"tasks/task-123/report.pdf","summary":"Report"}]' --task-id task-123
+
+node ${HERMES_SKILL_DIR}/cli.mjs get-work-context work-123 --task-id task-123
+node ${HERMES_SKILL_DIR}/cli.mjs get-task-status task-123
+
+node ${HERMES_SKILL_DIR}/cli.mjs send-notification workflow_complete "Analysis complete" "The report is ready"
+
+node ${HERMES_SKILL_DIR}/cli.mjs get-watchlist
+
+node ${HERMES_SKILL_DIR}/cli.mjs recommend-resource --source-type skill --title "Weekly report" \
+  --content-type report --summary "Sector review" --recommend-reason "Relevant to the watchlist"
+
+node ${HERMES_SKILL_DIR}/cli.mjs kb-search "白酒行业景气度" --type Research --limit 5
+node ${HERMES_SKILL_DIR}/cli.mjs kb-get 3f1c2b9a-uuid
+
+node ${HERMES_SKILL_DIR}/cli.mjs memory-search "茅台" --stock-codes "600519.SH" --limit 10
+node ${HERMES_SKILL_DIR}/cli.mjs memory-save "茅台双底形态已确认" \
+  --task-type market_insight --tags "600519.SH,食品饮料,双底" --work-id work-123
+node ${HERMES_SKILL_DIR}/cli.mjs memory-recall memory-123
+node ${HERMES_SKILL_DIR}/cli.mjs memory-update memory-123 --content "目标价调整为 1900"
 ```
 
-| 参数 | 必填 | 说明 |
-|---|---|---|
-| `<work_id>` (位置参数) | 是 | Work/Workflow ID |
-| `--task-id ID` | 否 | 指定具体任务 ID |
+User identity always comes from the authenticated MCP principal. Do not pass or infer another `userId`; `--user-id` is intentionally rejected for every command.
 
-**输出 JSON**：
+## File delivery rules
 
-```json
-{
-  "work": {
-    "id": "work-001",
-    "name": "每日复盘",
-    "status": "running",
-    "agent_type": "hogagent",
-    "created_at": "2026-07-20T08:00:00Z"
-  },
-  "tasks": [
-    { "id": "task-001", "work_id": "work-001", "status": "completed", "..." : "..." },
-    { "id": "task-002", "work_id": "work-001", "status": "pending", "..." : "..." }
-  ],
-  "target_task": { "..." : "...(仅当 --task-id 指定时)" }
-}
-```
+- `deliver-files` accepts either one or more positional paths, or a non-empty `--files-json` array of `{path, summary?}`; do not combine the two forms. `--task-id` associates the delivery with an existing workflow Task.
+- Deliver only files that already exist inside the current Agent workspace. Gateway rejects missing files, non-files, workspace escapes, symlinks outside the workspace, and `.hedgehog/` paths. The command never creates, edits, moves, or deletes a file.
+- MCP Resource projection is limited to 64 MiB per file. Use an existing HTTP/Relay streaming path for larger artifacts.
+- The output retains both the structured `delivered`/`errors` result and a `resource_links` array. A non-empty `errors` array is a partial failure: report the failed files even when other files were delivered.
 
-Work/Task 不存在时报错。
+## Knowledge and Memory rules
 
-### send-notification — 发送通知
+- The maintained KB types are `News`, `Research`, `Announcements`, `Minutes`, and `Views`. Use these exact values with `kb-search --type`; do not call a runtime type-listing operation. When Gateway changes this vocabulary, update this list and the Skill version.
+- `kb-search` also supports `--importance-min`, `--date-from`, `--date-to`, and `--limit`; `kb-get` returns the full item and chunks through a General MCP Resource.
+- `memory-search` supports `--task-type`, `--stock-codes`, `--industry`, `--tags`, `--work-id`, `--mode semantic|text|hybrid`, and `--limit`.
+- Use `memory-save` or `memory-update` only when the current request authorizes that mutation. Resolve the exact Memory ID before update.
+- Tag saved investment memories with useful stock codes, industry, and topic terms. Pass `--work-id` only when the actual Work ID is known; never invent one.
+- The CLI always emits JSON-compatible output. These named commands provide the selected KB/Memory surface without depending on the legacy KB MCP endpoint; arbitrary `call`, KB type listing, Memory delete, and Memory list are not carried over.
 
-```bash
-node ${HERMES_SKILL_DIR}/cli.mjs send-notification workflow_complete "分析完成" "贵州茅台深度分析已完成"
-```
+## Durable Tasks
 
-| 参数 | 必填 | 说明 |
-|---|---|---|
-| `<type>` (位置参数) | 是 | 通知类型（见下表） |
-| `<title>` (位置 或 `--title`) | 是 | 通知标题 |
-| `<body>` (位置 或 `--body`) | 是 | 通知正文 |
+Named commands may return an MCP Task. By default, the CLI polls until a terminal state, using the server-provided interval clamped to 250–30000 ms. Override it with `--poll-interval-ms`; use `--no-wait` only when another authorized MCP client will manage the returned Task.
 
-**输出 JSON**：
+When a Task reaches `input_required`, the CLI prints the Task with `inputRequests` and exits with code `42`. This Skill does not expose Task update or cancellation commands; use another authorized MCP client when follow-up control is required.
 
-```json
-{ "success": true, "id": "notif-uuid", "priority": "normal" }
-```
+## Output and failures
 
-**通知类型**：`workflow_complete` / `workflow_failed` / `checkpoint_confirm` / `resource_recommend` / `scheduled_task` / `auth_required` / `system_alert` / `agent_version` / `gateway_status` / `agent_connected` / `client_connected` / `custom`
+The CLI prints `structuredContent` when available. MCP `resource_link` content is retained in a `resource_links` array rather than discarded.
 
-### get-watchlist — 读取自选股
+Each HTTP request has a 15-second timeout; durable Task duration is handled through polling rather than a long request. JSON-RPC errors, MCP tool errors, failed or cancelled Tasks, invalid JSON, missing credentials, and invalid endpoints produce a non-zero exit code.
 
-```bash
-node ${HERMES_SKILL_DIR}/cli.mjs get-watchlist --user-id default
-```
+If two consecutive calls fail because of connection errors, timeouts, HTTP 404, an unknown tool or method, or protocol incompatibility, stop calling this Skill. Tell the user that the Gateway service may be unavailable or the installed Gateway may be too old for these commands, and ask them to check/restart the service or upgrade Gateway. Do not repeatedly invoke the same command, probe with other commands, or switch identities to work around the failure.
 
-| 参数 | 必填 | 说明 |
-|---|---|---|
-| `--user-id ID` | 否 | 用户 ID，默认 `default` |
+Treat invalid arguments and missing permissions as their reported errors rather than service availability failures, and do not retry unchanged input. After an ambiguous network failure on `memory-save`, `memory-update`, or `deliver-files`, do not blindly repeat the mutation; verify the result before any user-authorized follow-up.
 
-**输出 JSON**：
-
-```json
-[
-  {
-    "id": 1,
-    "userId": "default",
-    "stockCode": "600519.SH",
-    "stockName": "贵州茅台",
-    "sortOrder": 1,
-    "addedAt": "2026-01-15T10:00:00Z"
-  }
-]
-```
-
-无自选股时返回空数组 `[]`。
-
-### recommend-resource — 推荐资料
-
-```bash
-node ${HERMES_SKILL_DIR}/cli.mjs recommend-resource --source-type skill --title "白酒行业周报" \
-  --content-type report --summary "本周白酒板块回顾" --recommend-reason "与持仓相关"
-```
-
-| 参数 | 必填 | 说明 |
-|---|---|---|
-| `--source-type T` | 是 | 来源类型（如 skill/agent/manual） |
-| `--title X` | 是 | 资料标题 |
-| `--content-type T` | 否 | 内容类型（如 article/report/news） |
-| `--ciwei-id ID` | 否 | ciwei-ai 内容 ID |
-| `--resource-url U` | 否 | 资料 URL |
-| `--summary S` | 否 | 资料摘要 |
-| `--full-content C` | 否 | 全文文本 |
-| `--recommend-reason R` | 否 | 推荐理由 |
-
-**输出 JSON**：
-
-```json
-{ "id": "rec-uuid", "status": "pending" }
-```
-
-### push-workflow — 推送工作流
-
-```bash
-node ${HERMES_SKILL_DIR}/cli.mjs push-workflow --name "每日复盘" \
-  --workflow-def '{"tasks":[...],"result_task":"..."}' --agent-type hogagent
-```
-
-| 参数 | 必填 | 说明 |
-|---|---|---|
-| `--name N` | 是 | 工作流名称 |
-| `--workflow-def '<json>'` | 是 | 工作流定义（见下方结构） |
-| `--description D` | 否 | 工作流描述 |
-| `--agent-type A` | 否 | Agent 类型，默认 hogagent |
-| `--work-id ID` | 否 | 指定 Work ID，透传给编排器 |
-
-**workflow-def JSON 结构**：
-
-完整结构定义、示例和字段说明请参见 [workflow-def-spec.md](./references/workflow-def-spec.md)。
-
-**输出 JSON**：
-
-```json
-{ "success": true, "work_id": "work-uuid", "status": "pending" }
-```
-
-### list-extensions — 列出扩展
-
-```bash
-node ${HERMES_SKILL_DIR}/cli.mjs list-extensions --type skill --enabled true
-```
-
-| 参数 | 必填 | 说明 |
-|---|---|---|
-| `--type T` | 否 | 过滤扩展类型：`skill` / `mcp` |
-| `--enabled B` | 否 | 过滤启用状态：`true` / `false` |
-
-**输出 JSON**：
-
-```json
-[
-  {
-    "name": "hog-kb-tools",
-    "type": "skill",
-    "version": "1.1.0",
-    "enabled": true,
-    "description": "Query the Hedgehog knowledge base..."
-  }
-]
-```
-
-无扩展时返回空数组 `[]`。
-
-### call — 通用调用
-
-当需要访问尚未封装的参数时，可直接传原始 JSON：
-
-```bash
-node ${HERMES_SKILL_DIR}/cli.mjs call send_notification --json '{"type":"custom","title":"Hi","body":"..."}'
-```
-
-## 约束
-
-- MCP 请求超时 15 秒，超时返回错误而非挂起。
-- 向用户交付可下载文件请使用独立的 `deliver_files` 工具。
-- `report-task-result`、`push-workflow` 依赖 Gateway 的 WorkEngine；若未启用会返回错误。
-- 传入的 `--*-json` / `--workflow-def` 必须为合法 JSON，否则报错退出。
-- 所有命令在失败时输出错误信息到 stderr 并以非零退出码退出：`Error: MCP request failed: <reason>`
+Use `deliver-files` for standalone delivery. `report-task-result` may instead attach validated workspace files as part of a workflow result.
