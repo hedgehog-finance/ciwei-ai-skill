@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -443,6 +444,67 @@ test("deliver_files preserves restricted resource links", async () => {
     const output = JSON.parse(result.stdout);
     assert.equal(output.resource_links[0].uri, "hedgehog://exports/artifact-1");
   });
+});
+
+test("Gateway delivery CLIs accept UTF-8 JSON parameter files", async () => {
+  const tempDirectory = await mkdtemp(join(tmpdir(), "hedgehog-json-files-"));
+  const filesPath = join(tempDirectory, "files.json");
+  const deliveryPath = join(tempDirectory, "delivery-files.json");
+  await writeFile(filesPath, `\uFEFF${JSON.stringify([
+    { path: "tasks/task-file/报告 O'Reilly.pdf", summary: "中文摘要" },
+  ])}`, "utf8");
+  await writeFile(deliveryPath, `\uFEFF${JSON.stringify([
+    { name: "报告.pdf", path: "tasks/task-file/报告.pdf", summary: "复杂交付" },
+  ])}`, "utf8");
+
+  const observed = [];
+  try {
+    await withMockServer(async (request, response) => {
+      const body = await readJsonRequest(request);
+      observed.push({ client: request.headers["mcp-client-name"], name: body.params.name, args: body.params.arguments });
+      jsonResponse(response, {
+        content: [{ type: "text", text: '{"delivered":[],"errors":[]}' }],
+        structuredContent: { delivered: [], errors: [] },
+      });
+    }, async (url) => {
+      for (const [script, args] of [
+        [GATEWAY_CLI, ["deliver-files", "--files-json-file", filesPath, "--task-id", "task-file"]],
+        [GATEWAY_CLI, ["report-task-result", "task-file", "--delivery-files-json-file", deliveryPath]],
+        [DELIVER_FILES_CLI, ["--files-json-file", filesPath, "--task-id", "task-file"]],
+      ]) {
+        const result = await runCli(script, [...args, "--url", url, "--token", TEST_TOKEN]);
+        assert.equal(result.code, 0, result.stderr);
+      }
+    });
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
+
+  assert.deepEqual(observed.map(({ name, args }) => ({ name, args })), [
+    {
+      name: "deliver_files",
+      args: {
+        files: [{ path: "tasks/task-file/报告 O'Reilly.pdf", summary: "中文摘要" }],
+        task_id: "task-file",
+      },
+    },
+    {
+      name: "report_task_result",
+      args: {
+        task_id: "task-file",
+        result: {
+          delivery_files: [{ name: "报告.pdf", path: "tasks/task-file/报告.pdf", summary: "复杂交付" }],
+        },
+      },
+    },
+    {
+      name: "deliver_files",
+      args: {
+        files: [{ path: "tasks/task-file/报告 O'Reilly.pdf", summary: "中文摘要" }],
+        task_id: "task-file",
+      },
+    },
+  ]);
 });
 
 test("CLIs reject missing credentials and cross-user watchlist arguments", async () => {

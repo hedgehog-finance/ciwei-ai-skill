@@ -7,10 +7,15 @@ description: >
   Triggers: GDP, CPI, unemployment, federal funds rate, options chain, Greeks, treasury yield,
   economic calendar, stock index, forex, commodity, gold, crude oil.
   NOT for: China A-shares (use hedgehog-company-index-data).
-version: 1.0.1
+version: 1.1.0
 ---
 
 # Global Financial Data Query (OpenBB Platform)
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 A global financial data query skill based on [OpenBB Platform](https://github.com/OpenBB-finance/OpenBB).
 Covers macroeconomics, options chains, global indices, forex, commodities, and more. **Does not support China A-share market data.**
@@ -19,9 +24,21 @@ Covers macroeconomics, options chains, global indices, forex, commodities, and m
 
 ## 1. Prerequisites
 
-```bash
-pip install openbb[all]
+Install the packages declared in `requirements.txt` before first use. Replace `<skill_path>` with the directory containing this `SKILL.md`.
+
+PowerShell:
+
+```powershell
+python -m pip install -r "<skill_path>/requirements.txt"
 ```
+
+Bash:
+
+```bash
+python3 -m pip install -r "<skill_path>/requirements.txt"
+```
+
+Run the command again if the Python environment is recreated, after reinstalling/updating the Skill, or when Python reports `No module named ...` / `openbb-api command not found`.
 
 > The script automatically manages the `openbb-api` service lifecycle (auto-starts on first call, auto-shuts down after 30 minutes of idle). No manual startup required.
 
@@ -125,7 +142,10 @@ node scripts/server_manager.js status   # View running status (JSON output)
 
 ```bash
 node scripts/call_api.js --api <api-name> --params '<JSON-string>'
+node scripts/call_api.js --api <api-name> --params-file <params.json>
 ```
+
+Use `--params` for short, simple JSON. Use `--params-file` for long, nested, generated, or quote-heavy UTF-8 JSON; the two options are mutually exclusive.
 
 **Common parameter `fields`**: All Tools support a `fields` parameter (type `string[]`) to trim response fields and save tokens.
 
@@ -292,7 +312,7 @@ node scripts/call_api.js --api <api-name> --params '<JSON-string>'
 
 | Error Type | Resolution |
 |---|---|
-| openbb-api command not found | Prompt to install: `pip install openbb[all]` |
+| openbb-api command not found | Install from this Skill's requirements file as shown in Prerequisites |
 | Service startup timeout (15s) | Check if port 59201 is occupied, or if the Python environment is correct |
 | HTTP 4xx | Check parameter format and whether the provider is configured correctly |
 | HTTP 5xx | Server error; retry later or run `node scripts/server_manager.js stop` then restart |

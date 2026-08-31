@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Hedgehog Deliver Files CLI — General MCP 2026-07-28.
 
+import { readFileSync } from "node:fs";
+
 import {
   GeneralMcpClient,
   printJson,
@@ -10,7 +12,7 @@ import {
   toolResultError,
 } from "./mcp-client.mjs";
 
-const VERSION = "2.0.0";
+const VERSION = "2.1.0";
 
 function parseFlags(argv) {
   const flags = {};
@@ -54,6 +56,27 @@ function parseJsonFlag(flags, key) {
     return JSON.parse(flags[key]);
   } catch (error) {
     throw new Error(`Invalid --${key} JSON: ${error.message}`);
+  }
+}
+
+function parseJsonFlagOrFile(flags, key, fileKey) {
+  if (flags[key] === true) throw new Error(`--${key} requires a JSON value`);
+  if (flags[fileKey] === true) throw new Error(`--${fileKey} requires a file path`);
+  if (flags[key] !== undefined && flags[fileKey] !== undefined) {
+    throw new Error(`--${key} and --${fileKey} are mutually exclusive`);
+  }
+  if (flags[fileKey] === undefined) return parseJsonFlag(flags, key);
+
+  let raw;
+  try {
+    raw = readFileSync(flags[fileKey], "utf8");
+  } catch (error) {
+    throw new Error(`Unable to read --${fileKey} ${flags[fileKey]}: ${error.message}`);
+  }
+  try {
+    return JSON.parse(raw.replace(/^\uFEFF/, ""));
+  } catch (error) {
+    throw new Error(`Invalid --${fileKey} JSON: ${error.message}`);
   }
 }
 
@@ -103,10 +126,12 @@ const HELP = `deliver_files v${VERSION} — deliver workspace files through Gate
 Usage:
   deliver_files <path...> [--summary S] [--task-id ID]
   deliver_files --files-json '[{"path":"...","summary":"..."}]' [--task-id ID]
+  deliver_files --files-json-file <files.json> [--task-id ID]
 
 Options:
   --summary S             Summary applied to all positional file paths
   --files-json '<json>'   Non-empty file array [{path, summary?}]
+  --files-json-file PATH  Read the non-empty file array from a UTF-8 JSON file
   --task-id ID            Associated workflow task ID
   --url <url>             MCP endpoint; defaults to HEDGEHOG_MCP_GENERAL_URL or http://127.0.0.1:59102/mcp
   --token <token>         MCP Bearer token; defaults to HEDGEHOG_MCP_GENERAL_TOKEN
@@ -121,7 +146,7 @@ async function main() {
   }
 
   const flags = parseFlags(remaining);
-  let files = parseJsonFlag(flags, "files-json");
+  let files = parseJsonFlagOrFile(flags, "files-json", "files-json-file");
   const paths = positional(remaining);
   if (files !== undefined && paths.length > 0) {
     throw new Error("<path...> and --files-json are mutually exclusive; provide exactly one");

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Hedgehog Gateway Tools CLI — General MCP 2026-07-28.
 
+import { readFileSync } from "node:fs";
+
 import {
   GeneralMcpClient,
   clampPollInterval,
@@ -15,7 +17,7 @@ import {
   waitForTask,
 } from "./mcp-client.mjs";
 
-const VERSION = "3.4.0";
+const VERSION = "3.5.0";
 const INPUT_REQUIRED_EXIT_CODE = 42;
 
 function parseFlags(argv) {
@@ -60,6 +62,27 @@ function parseJsonFlag(flags, key) {
     return JSON.parse(flags[key]);
   } catch (error) {
     throw new Error(`Invalid --${key} JSON: ${error.message}`);
+  }
+}
+
+function parseJsonFlagOrFile(flags, key, fileKey) {
+  if (flags[key] === true) throw new Error(`--${key} requires a JSON value`);
+  if (flags[fileKey] === true) throw new Error(`--${fileKey} requires a file path`);
+  if (flags[key] !== undefined && flags[fileKey] !== undefined) {
+    throw new Error(`--${key} and --${fileKey} are mutually exclusive`);
+  }
+  if (flags[fileKey] === undefined) return parseJsonFlag(flags, key);
+
+  let raw;
+  try {
+    raw = readFileSync(flags[fileKey], "utf8");
+  } catch (error) {
+    throw new Error(`Unable to read --${fileKey} ${flags[fileKey]}: ${error.message}`);
+  }
+  try {
+    return JSON.parse(raw.replace(/^\uFEFF/, ""));
+  } catch (error) {
+    throw new Error(`Invalid --${fileKey} JSON: ${error.message}`);
   }
 }
 
@@ -147,23 +170,22 @@ function reportTaskResultArgs(args) {
   const flags = parseFlags(args);
   const taskId = positional(args)[0];
   if (!taskId) {
-    throw new Error("Usage: hog-gateway-tools report-task-result <task_id> [--content C] [--summary S] [--delivery-files-json '<json>']");
+    throw new Error("Usage: hog-gateway-tools report-task-result <task_id> [--content C] [--summary S] [--delivery-files-json '<json>' | --delivery-files-json-file <path.json>]");
   }
   const result = {};
   if (flags.content && flags.content !== true) result.content = flags.content;
   if (flags.summary && flags.summary !== true) result.summary = flags.summary;
-  const deliveryFiles = parseJsonFlag(flags, "delivery-files-json");
+  const deliveryFiles = parseJsonFlagOrFile(flags, "delivery-files-json", "delivery-files-json-file");
   if (deliveryFiles !== undefined) result.delivery_files = deliveryFiles;
   return { task_id: taskId, result };
 }
 
 function deliverFilesArgs(args) {
   const flags = parseFlags(args);
-  if (flags["files-json"] === true) throw new Error("--files-json requires a JSON value");
   if (flags.summary === true) throw new Error("--summary requires a value");
   if (flags["task-id"] === true) throw new Error("--task-id requires a value");
 
-  let files = parseJsonFlag(flags, "files-json");
+  let files = parseJsonFlagOrFile(flags, "files-json", "files-json-file");
   const paths = positional(args);
   if (files !== undefined && paths.length > 0) {
     throw new Error("<path...> and --files-json are mutually exclusive; provide exactly one");
@@ -307,9 +329,10 @@ function memoryUpdateArgs(args) {
 const HELP = `hog-gateway-tools v${VERSION} — Gateway General MCP 2026-07-28 CLI
 
 Usage:
-  hog-gateway-tools report-task-result <task_id> [--content C] [--summary S] [--delivery-files-json '<json>']
+  hog-gateway-tools report-task-result <task_id> [--content C] [--summary S] [--delivery-files-json '<json>' | --delivery-files-json-file <path.json>]
   hog-gateway-tools deliver-files <path...> [--summary S] [--task-id ID]
   hog-gateway-tools deliver-files --files-json '[{"path":"...","summary":"..."}]' [--task-id ID]
+  hog-gateway-tools deliver-files --files-json-file <files.json> [--task-id ID]
   hog-gateway-tools get-work-context <work_id> [--task-id ID]
   hog-gateway-tools get-task-status <task_id>
   hog-gateway-tools send-notification <type> <title> <body>

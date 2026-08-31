@@ -21,12 +21,7 @@ The fallback CLI automatically resolves HogAgent `skills_config.json`, `GEN_RICH
 Basic generation command:
 
 ```bash
-~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/image_gen.py generate \
-  --model gpt-image-2 \
-  --prompt-file {prompt_file} \
-  --size 2560x1440 \
-  --quality medium \
-  --out {base_dir}/{deck_name}/origin_image/slide_01.png
+~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/image_gen.py generate --model gpt-image-2 --prompt-file {prompt_file} --size 2560x1440 --quality medium --out {base_dir}/{deck_name}/origin_image/slide_01.png
 ```
 
 The fallback CLI accepts model names containing `gpt-image-`, such as `gpt-image-2` or `openai/gpt-image-2`.
@@ -34,12 +29,7 @@ The fallback CLI accepts model names containing `gpt-image-`, such as `gpt-image
 When generating from saved `prompts/slide_XX.json` files, use the job's `prompt` field only when the job does not require input images:
 
 ```bash
-python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("{base_dir}/{deck_name}/prompts/slide_01.json").read_text())["prompt"])' | \
-~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/image_gen.py generate \
-  --prompt-file - \
-  --size 2560x1440 \
-  --quality medium \
-  --out {base_dir}/{deck_name}/origin_image/slide_01.png
+python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("{base_dir}/{deck_name}/prompts/slide_01.json").read_text())["prompt"])' | ~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/image_gen.py generate --prompt-file - --size 2560x1440 --quality medium --out {base_dir}/{deck_name}/origin_image/slide_01.png
 ```
 
 Before using this text-only `generate` path, inspect the assigned `prompts/slide_XX.json`. If `input_images` is non-empty or `requires_context_images` is true, this command is not sufficient because it does not attach those images. Use a selected backend/path that can pass the required images, such as the built-in image tool with the images visible in context or a CLI/API edit/image-input path that supplies every required source image. If no such path is available, stop and ask the user whether to switch backend. Do not generate a text-only replacement for a strict input asset.
@@ -58,10 +48,7 @@ The fallback CLI defaults to 2K 16:9 landscape output, `2560x1440`, because it k
 If a slide is mostly correct but has a localized issue, use the selected backend's edit capability when available. In CLI/API fallback mode:
 
 ```bash
-~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/image_gen.py edit \
-  --image {slide_path} \
-  --prompt {edit_prompt} \
-  --out {new_slide_path}
+~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/image_gen.py edit --image {slide_path} --prompt {edit_prompt} --out {new_slide_path}
 ```
 
 Replace the final slide only after validating the edited output.

@@ -4,10 +4,12 @@
  *
  * Usage:
  *   node ./scripts/call-api.mjs <method> '<params-json>'
+ *   node ./scripts/call-api.mjs <method> --params-file <params.json>
  */
 
 import FinMaster from 'finmaster';
 import { fileURLToPath } from 'node:url';
+import { readJsonParams } from './read-params.mjs';
 
 const fm = new FinMaster();
 
@@ -50,6 +52,7 @@ function main() {
   if (argv.length < 1) {
     throw new Error(
       `Usage: node call-api.mjs <method> '<params-json>'\n` +
+      `       node call-api.mjs <method> --params-file <params.json>\n` +
       `Supported methods: ${VALID_METHODS.join(', ')}`
     );
   }
@@ -62,14 +65,7 @@ function main() {
     );
   }
 
-  let params = {};
-  if (argv[1]) {
-    try {
-      params = JSON.parse(argv[1]);
-    } catch (err) {
-      throw new Error(`Invalid JSON for <params>: ${err.message}`);
-    }
-  }
+  const params = readJsonParams(argv.slice(1));
 
   // Validate required parameters
   const missing = def.required.filter((k) => params[k] === undefined);

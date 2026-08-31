@@ -1,7 +1,7 @@
 {
   "name": "hog-gateway-tools",
   "license": "GPL-3.0",
-  "version": "3.4.0",
+  "version": "3.5.0",
   "private": true,
   "type": "module",
   "description": "Gateway General MCP 2026-07-28 CLI with named workflow, file delivery, knowledge, memory and durable task operations.",

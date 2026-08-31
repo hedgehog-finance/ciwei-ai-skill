@@ -492,6 +492,31 @@ function parseArgs(argv) {
   return args;
 }
 
+function readJsonParams(args) {
+  if (args.params === true) throw new Error('--params 需要 JSON 值');
+  if (args['params-file'] === true) throw new Error('--params-file 需要文件路径');
+  if (args.params !== undefined && args['params-file'] !== undefined) {
+    throw new Error('--params 与 --params-file 不能同时使用');
+  }
+  if (args.params === undefined && args['params-file'] === undefined) return {};
+
+  let raw = args.params;
+  let source = '--params';
+  if (args['params-file'] !== undefined) {
+    source = `--params-file ${args['params-file']}`;
+    try {
+      raw = fs.readFileSync(args['params-file'], 'utf8');
+    } catch (error) {
+      throw new Error(`无法读取 ${source}: ${error.message}`);
+    }
+  }
+  try {
+    return JSON.parse(raw.replace(/^\uFEFF/, ""));
+  } catch (error) {
+    throw new Error(`${source} 不是合法 JSON: ${error.message}`);
+  }
+}
+
 function buildUrl(routePath, params) {
   const path = routePath.replace(/:(\w+)/g, (_, key) => {
     if (params[key] === undefined || params[key] === null) {
@@ -1326,14 +1351,7 @@ async function main() {
     throw new Error('缺少参数: --api <接口名>');
   }
 
-  let params = {};
-  if (args.params) {
-    try {
-      params = JSON.parse(args.params);
-    } catch (err) {
-      throw new Error(`--params 不是合法 JSON: ${err.message}`);
-    }
-  }
+  const params = readJsonParams(args);
 
   const route = API_ROUTES[args.api];
   // 落盘策略由路由配置 saveOutput 硬编码决定，--output save 可强制覆盖

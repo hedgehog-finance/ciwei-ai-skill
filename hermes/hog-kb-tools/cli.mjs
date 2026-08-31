@@ -184,28 +184,43 @@ async function cmdCall(url, args) {
   const f = parseFlags(args);
   const tool = positional(args)[0];
   if (!tool) {
-    console.error('Usage: hog-kb-tools call <tool> --json \'{"key":"value"}\'');
+    console.error('Usage: hog-kb-tools call <tool> (--json \'{"key":"value"}\' | --json-file <arguments.json>)');
     process.exit(1);
   }
+  if (f.json === true) throw new Error("--json requires a JSON value");
+  if (f["json-file"] === true) throw new Error("--json-file requires a file path");
+  if (f.json !== undefined && f["json-file"] !== undefined) {
+    throw new Error("--json and --json-file are mutually exclusive");
+  }
   let payload = {};
-  if (f.json && f.json !== true) {
+  let rawJson = f.json;
+  let source = "--json";
+  if (f["json-file"] !== undefined) {
+    source = `--json-file ${f["json-file"]}`;
     try {
-      payload = JSON.parse(f.json);
+      rawJson = await readFile(f["json-file"], "utf8");
     } catch (err) {
-      console.error(`Invalid --json: ${err.message}`);
-      process.exit(1);
+      throw new Error(`Unable to read ${source}: ${err.message}`);
+    }
+  }
+  if (rawJson !== undefined) {
+    try {
+      payload = JSON.parse(rawJson.replace(/^\uFEFF/, ""));
+    } catch (err) {
+      throw new Error(`Invalid JSON from ${source}: ${err.message}`);
     }
   }
   printResult(await callMcp(url, tool, payload));
 }
 
-const HELP = `hog-kb-tools v1.0.0 — Gateway KB MCP Server CLI (Knowledge Base only)
+const HELP = `hog-kb-tools v1.2.0 — Gateway KB MCP Server CLI (Knowledge Base only)
 
 Usage:
   hog-kb-tools search <query> [--type T] [--importance-min 0-5] [--date-from YYYY-MM-DD] [--date-to YYYY-MM-DD] [--limit 1-20]
   hog-kb-tools get <itemId>
   hog-kb-tools list-types
   hog-kb-tools call <tool> --json '<arguments>'
+  hog-kb-tools call <tool> --json-file <arguments.json>
 
 Global options (may appear before or after the subcommand):
   --url <url>   Override MCP endpoint (highest priority)

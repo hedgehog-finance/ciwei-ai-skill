@@ -8,10 +8,15 @@ description: >
   Triggers: stock quote, price, company profile, PE ratio, market cap, recommendation,
   buy/sell rating, target price, EPS, insider trading, financial news, forex, crypto.
   NOT for: China A-shares (use hedgehog-company-index-data); options/macro (use hog-openbb).
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Global Financial Data Query (Finnhub)
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 A global financial data query skill based on the [Finnhub REST API](https://finnhub.io/docs/api).
 Covers stock quotes, company fundamentals, analyst ratings, earnings, market news, forex, and more. **Does not support China A-share market data.**
@@ -90,7 +95,10 @@ export FINNHUB_API_KEY="your-finnhub-api-key"
 
 ```bash
 node scripts/call_api.js --api <api-name> --params '<JSON-string>'
+node scripts/call_api.js --api <api-name> --params-file <params.json>
 ```
+
+Use `--params` for short, simple JSON. Use `--params-file` for long, nested, generated, or quote-heavy UTF-8 JSON; the two options are mutually exclusive.
 
 **Common parameter `fields`**: All Tools support a `fields` parameter (type `string[]`) to trim response fields and save tokens.
 

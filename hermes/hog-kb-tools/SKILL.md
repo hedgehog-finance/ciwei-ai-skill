@@ -1,6 +1,6 @@
 ---
 name: hog-kb-tools
-version: 1.1.0
+version: 1.2.0
 description: >
     Query the Hedgehog knowledge base (news/research/announcements/minutes/views)
     via the Gateway KB MCP Server. Use to retrieve documents by semantic search
@@ -11,6 +11,11 @@ prerequisites:
 ---
 
 # 知识库检索 (KB MCP)
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 封装 Gateway **KB MCP Server**（`hedgehog-kb-mcp`）暴露的知识库工具，提供知识库语义检索与文档获取能力。所有调用通过 HTTP JSON-RPC 2.0 与 Gateway 交互。
 
@@ -114,7 +119,10 @@ node ${HERMES_SKILL_DIR}/cli.mjs list-types
 
 ```bash
 node ${HERMES_SKILL_DIR}/cli.mjs call kb_search --json '{"query":"新能源","limit":3}'
+node ${HERMES_SKILL_DIR}/cli.mjs call kb_search --json-file <arguments.json>
 ```
+
+短小参数使用 `--json`；长、深层嵌套、自动生成或引号较多的 UTF-8 JSON 使用 `--json-file`。两者不能同时使用。
 
 输出 JSON 与对应命令一致。
 

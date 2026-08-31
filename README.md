@@ -24,21 +24,25 @@ hedgehog-skills/
 | **Hermes** | `hermes/` | 21 | OpenClaw-equivalent skill set with Hermes-native secrets and Node.js prerequisites |
 | **Optional** | `optional/` | 3 | Rich PPT generation and global market data extensions |
 
+## Windows command compatibility
+
+Windows command examples support PowerShell or an installed Bash; `cmd.exe` is not supported. Keep commands on one physical line. Wrap simple inline JSON arguments in single quotes. When JSON contains a single quote, use the active shell's escaping (`'\''` in Bash, `''` in PowerShell). For long, deeply nested, or generated JSON, save UTF-8 JSON to a parameter file and use the command's documented file option.
+
 ## Skills Overview
 
 ### Core Investment Research Skills (shared by HogAgent, OpenClaw & Hermes)
 
 | Skill | Version | Description |
 |-------|---------|-------------|
-| `hedgehog-company-index-data` | 1.10.0 | Query A-share company profiles, daily/minute quotes and financials, domestic/global index quotes and weights, Shenwan industry data, and trading calendars |
+| `hedgehog-company-index-data` | 1.11.0 | Query A-share company profiles, daily/minute quotes and financials, domestic/global index quotes and weights, Shenwan industry data, and trading calendars |
 | `hedgehog-daily-morning-briefing` | 2.2.5 | Pre-market intelligence brief — filters macro, sector and watchlist news to extract core logic |
 | `hedgehog-financial-report-analysis` | 1.3.0 | Financial report interpretation with context-aware anomaly analysis, audit-note checks, cash flow and risk |
-| `hog-gateway-tools` | 3.4.0 | Authenticated General MCP CLI with restricted file delivery, Work context, Task Resource status, Knowledge and persistent Memory commands plus bounded failure retries and durable Task polling |
+| `hog-gateway-tools` | 3.5.0 | Authenticated General MCP CLI with restricted file delivery, Work context, Task Resource status, Knowledge and persistent Memory commands plus bounded failure retries and durable Task polling |
 | `hedgehog-in-depth-analysis` | 2.2.2 | Probability-tree scenario analysis for major events (macro volatility / black swans / geopolitics / policy shifts), predicting high-probability paths and measuring market impact |
 | `hedgehog-information-verification` | 2.2.2 | Cross-validate market rumors and unconfirmed news via multi-source verification, quantifying confidence scores to prevent misinformation-driven decisions |
-| `hog-kb-tools` | 1.1.0 | Legacy KB MCP endpoint compatibility; Knowledge search/get are also available in `hog-gateway-tools` 3.4 |
-| `hedgehog-macro-industry-data` | 1.7.0 | Query China-US macro data: Shibor, LPR, CPI, PPI, PMI, M0/M1/M2, social financing, US Treasury yields |
-| `hedgehog-news-reports` | 1.8.0 | Unified search and analysis across financial news, A-share research reports, and listed company announcements |
+| `hog-kb-tools` | 1.2.0 | Legacy KB MCP endpoint compatibility; Knowledge search/get are also available in `hog-gateway-tools` 3.5 |
+| `hedgehog-macro-industry-data` | 1.8.0 | Query China-US macro data: Shibor, LPR, CPI, PPI, PMI, M0/M1/M2, social financing, US Treasury yields |
+| `hedgehog-news-reports` | 1.9.0 | Unified search and analysis across financial news, A-share research reports, and listed company announcements |
 | `hedgehog-stock-research` | 2.3.0 | Multi-dimensional individual stock analysis: fundamentals, sentiment, technicals, and backtest-ready quantitative research ideas + CIO integration |
 
 ### Cross-Agent Authentication
@@ -49,17 +53,17 @@ hedgehog-skills/
 
 | Skill | Version | Description |
 |-------|---------|-------------|
-| `company-valuation` | 3.0.1 | Valuation engine with Vega-Lite v6 sensitivity heatmap output |
-| `deliver_files` | 2.0.0 | Compatibility wrapper for file delivery; the same restricted Resource Link flow is available in `hog-gateway-tools` 3.4 |
-| `doc-convert` | 2.0.0 | Document format conversion: MD / HTML / PDF / DOCX |
-| `fin-calc` | 1.0.0 | Financial calculator: PV, FV, PMT, NPV, IRR, RATE |
-| `gen-chart` | 2.3.1 | Chart generation with Vega-Lite v6, Mermaid, and ECharts |
-| `gen-ppt` | 2.3.0 | Generate and validate target-aware PPTX presentations: native charts for PowerPoint, PNG charts for Keynote/universal, or HTML slides from Markdown |
-| `hog-memory` | 1.2.0 | Legacy KB MCP endpoint compatibility; Memory save/search/recall/update are also available in `hog-gateway-tools` 3.4 |
-| `math_calc` | 1.0.0 | Safe mathematical expression evaluator CLI |
-| `table-convert` | 1.0.1 | Spreadsheet conversion (xlsx / xls / csv → JSON / Markdown) |
-| `tech-indicators` | 1.0.0 | Local technical indicator calculation engine |
-| `web_fetch` | 1.0.0 | Web page fetching and main content extraction (output as Markdown) |
+| `company-valuation` | 3.0.3 | Valuation engine with Vega-Lite v6 sensitivity heatmap output |
+| `deliver_files` | 2.1.0 | Compatibility wrapper for file delivery; the same restricted Resource Link flow is available in `hog-gateway-tools` 3.5 |
+| `doc-convert` | 2.1.0 | Document format conversion: MD / HTML / PDF / DOCX |
+| `fin-calc` | 1.0.2 | Financial calculator: PV, FV, PMT, NPV, IRR, RATE |
+| `gen-chart` | 2.4.0 | Chart generation with Vega-Lite v6, Mermaid, and ECharts |
+| `gen-ppt` | 2.4.0 | Generate and validate target-aware PPTX presentations: native charts for PowerPoint, PNG charts for Keynote/universal, or HTML slides from Markdown |
+| `hog-memory` | 1.3.0 | Legacy KB MCP endpoint compatibility; Memory save/search/recall/update are also available in `hog-gateway-tools` 3.5 |
+| `math_calc` | 1.1.0 | Safe mathematical expression evaluator CLI |
+| `table-convert` | 1.1.0 | Spreadsheet conversion (xlsx / xls / csv → JSON / Markdown) |
+| `tech-indicators` | 1.1.0 | Local technical indicator calculation engine |
+| `web_fetch` | 1.1.0 | Web page fetching and main content extraction (output as Markdown) |
 
 ### Gateway MCP CLI Development
 
@@ -82,9 +86,9 @@ node --test tests/gateway-mcp-clis.test.mjs
 
 | Skill | Version | Description |
 |-------|---------|-------------|
-| `gen-rich-ppt` | 1.0.0 | Generate polished image-based PPT/PPTX decks with built-in or OpenAI-compatible image models |
-| `hog-finnhub` | 1.0.0 | Global stock data via Finnhub API: quotes, fundamentals, analyst ratings, news, forex, crypto (excludes China A-shares) |
-| `hog-openbb` | 1.0.1 | Global financial data via OpenBB Platform: macro economics, options chains, global indices, forex, commodities (excludes China A-shares) |
+| `gen-rich-ppt` | 1.1.0 | Generate polished image-based PPT/PPTX decks with built-in or OpenAI-compatible image models |
+| `hog-finnhub` | 1.1.0 | Global stock data via Finnhub API: quotes, fundamentals, analyst ratings, news, forex, crypto (excludes China A-shares) |
+| `hog-openbb` | 1.1.0 | Global financial data via OpenBB Platform: macro economics, options chains, global indices, forex, commodities (excludes China A-shares) |
 
 ## GenPPT Development
 

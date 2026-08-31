@@ -40,36 +40,31 @@ The following parameters can be used across multiple endpoints (depending on pro
 ### Query US GDP
 
 ```bash
-node scripts/call_api.js --api getMacroIndicators \
-  --params '{"symbol":"GDP","provider":"fred","start_date":"2020-01-01"}'
+node scripts/call_api.js --api getMacroIndicators --params '{"symbol":"GDP","provider":"fred","start_date":"2020-01-01"}'
 ```
 
 ### Query AAPL Options Chain
 
 ```bash
-node scripts/call_api.js --api getOptionChains \
-  --params '{"symbol":"AAPL","provider":"polygon"}'
+node scripts/call_api.js --api getOptionChains --params '{"symbol":"AAPL","provider":"polygon"}'
 ```
 
 ### Query S&P 500 Index
 
 ```bash
-node scripts/call_api.js --api getGlobalIndices \
-  --params '{"symbol":"^GSPC","provider":"alpha_vantage"}'
+node scripts/call_api.js --api getGlobalIndices --params '{"symbol":"^GSPC","provider":"alpha_vantage"}'
 ```
 
 ### Query EUR/USD Exchange Rate
 
 ```bash
-node scripts/call_api.js --api getForexRates \
-  --params '{"symbol":"EURUSD","provider":"alpha_vantage"}'
+node scripts/call_api.js --api getForexRates --params '{"symbol":"EURUSD","provider":"alpha_vantage"}'
 ```
 
 ### Query WTI Crude Oil Price
 
 ```bash
-node scripts/call_api.js --api getCommodityPrices \
-  --params '{"symbol":"DCOILWTICO","provider":"fred"}'
+node scripts/call_api.js --api getCommodityPrices --params '{"symbol":"DCOILWTICO","provider":"fred"}'
 ```
 
 ---

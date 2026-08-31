@@ -1,6 +1,6 @@
 {
   "name": "web_fetch",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Fetch web page and extract main content as Markdown",
   "type": "module",
   "main": "cli.mjs",

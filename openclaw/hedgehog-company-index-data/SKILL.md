@@ -5,7 +5,7 @@ description: >
   capital flow, financial statements, ratios, audit opinions, main business composition; domestic index
   profiles/daily metrics/constituent weights, global index daily quotes; Shenwan industry data and trading calendar utilities.
   NOT for: macro data (→ hedgehog-macro-industry-data); news/announcements.
-version: 1.10.0
+version: 1.11.0
 metadata:
   {
     "openclaw": {
@@ -15,6 +15,11 @@ metadata:
 ---
 
 # 上市公司与指数数据查询
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 ## 工作流
 
@@ -46,7 +51,10 @@ metadata:
 
 ```bash
 node scripts/call_api.js --api <接口名> --params '<JSON字符串>' --dir <sessionTaskDir>
+node scripts/call_api.js --api <接口名> --params-file <params.json> --dir <sessionTaskDir>
 ```
+
+简单参数使用 `--params`；长、深层嵌套、自动生成或引号较多的 UTF-8 JSON 使用 `--params-file`。两者不能同时使用。
 
 - `--dir <sessionTaskDir>` 始终必传；若系统和用户均未指定，使用当前 workspace。
 - `--out <文件名>` 可选，指定相对 `--dir` 或绝对输出路径；省略时使用 `data-<datetime>-<N>.json`。

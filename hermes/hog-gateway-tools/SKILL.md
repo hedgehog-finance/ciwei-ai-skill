@@ -1,6 +1,6 @@
 ---
 name: hog-gateway-tools
-version: 3.4.0
+version: 3.5.0
 description: >
     Call authenticated Hedgehog Gateway General MCP capabilities, including
     workflow reporting, restricted workspace file delivery, Work context and Task status, knowledge-base retrieval,
@@ -14,6 +14,11 @@ prerequisites:
 ---
 
 # Gateway General MCP Tools
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 Use this Skill to call the Gateway General MCP `2026-07-28` endpoint. The CLI supplies the required modern MCP headers and `_meta` envelope, preserves structured results and Resource Links, and handles the `io.modelcontextprotocol/tasks` lifecycle.
 
@@ -73,14 +78,12 @@ Use `--help` for the complete CLI syntax.
 ### Common calls
 
 ```bash
-node ${HERMES_SKILL_DIR}/cli.mjs report-task-result task-123 \
-  --content "Task output" --summary "Summary" \
-  --delivery-files-json '[{"name":"report.pdf","path":"tasks/task-123/report.pdf","summary":"Report"}]'
+node ${HERMES_SKILL_DIR}/cli.mjs report-task-result task-123 --content "Task output" --summary "Summary" --delivery-files-json '[{"name":"report.pdf","path":"tasks/task-123/report.pdf","summary":"Report"}]'
+node ${HERMES_SKILL_DIR}/cli.mjs report-task-result task-123 --content "Task output" --delivery-files-json-file <delivery-files.json>
 
-node ${HERMES_SKILL_DIR}/cli.mjs deliver-files tasks/task-123/report.pdf tasks/task-123/chart.png \
-  --summary "Analysis artifacts" --task-id task-123
-node ${HERMES_SKILL_DIR}/cli.mjs deliver-files --files-json \
-  '[{"path":"tasks/task-123/report.pdf","summary":"Report"}]' --task-id task-123
+node ${HERMES_SKILL_DIR}/cli.mjs deliver-files tasks/task-123/report.pdf tasks/task-123/chart.png --summary "Analysis artifacts" --task-id task-123
+node ${HERMES_SKILL_DIR}/cli.mjs deliver-files --files-json '[{"path":"tasks/task-123/report.pdf","summary":"Report"}]' --task-id task-123
+node ${HERMES_SKILL_DIR}/cli.mjs deliver-files --files-json-file <files.json> --task-id task-123
 
 node ${HERMES_SKILL_DIR}/cli.mjs get-work-context work-123 --task-id task-123
 node ${HERMES_SKILL_DIR}/cli.mjs get-task-status task-123
@@ -89,15 +92,13 @@ node ${HERMES_SKILL_DIR}/cli.mjs send-notification workflow_complete "Analysis c
 
 node ${HERMES_SKILL_DIR}/cli.mjs get-watchlist
 
-node ${HERMES_SKILL_DIR}/cli.mjs recommend-resource --source-type skill --title "Weekly report" \
-  --content-type report --summary "Sector review" --recommend-reason "Relevant to the watchlist"
+node ${HERMES_SKILL_DIR}/cli.mjs recommend-resource --source-type skill --title "Weekly report" --content-type report --summary "Sector review" --recommend-reason "Relevant to the watchlist"
 
 node ${HERMES_SKILL_DIR}/cli.mjs kb-search "白酒行业景气度" --type Research --limit 5
 node ${HERMES_SKILL_DIR}/cli.mjs kb-get 3f1c2b9a-uuid
 
 node ${HERMES_SKILL_DIR}/cli.mjs memory-search "茅台" --stock-codes "600519.SH" --limit 10
-node ${HERMES_SKILL_DIR}/cli.mjs memory-save "茅台双底形态已确认" \
-  --task-type market_insight --tags "600519.SH,食品饮料,双底" --work-id work-123
+node ${HERMES_SKILL_DIR}/cli.mjs memory-save "茅台双底形态已确认" --task-type market_insight --tags "600519.SH,食品饮料,双底" --work-id work-123
 node ${HERMES_SKILL_DIR}/cli.mjs memory-recall memory-123
 node ${HERMES_SKILL_DIR}/cli.mjs memory-update memory-123 --content "目标价调整为 1900"
 ```
@@ -106,7 +107,8 @@ User identity always comes from the authenticated MCP principal. Do not pass or 
 
 ## File delivery rules
 
-- `deliver-files` accepts either one or more positional paths, or a non-empty `--files-json` array of `{path, summary?}`; do not combine the two forms. `--task-id` associates the delivery with an existing workflow Task.
+- `deliver-files` accepts exactly one file-input form: positional paths, an inline non-empty `--files-json` array, or `--files-json-file` pointing to that array in a UTF-8 JSON file. `--task-id` associates the delivery with an existing workflow Task.
+- `report-task-result` accepts delivery metadata through either inline `--delivery-files-json` or UTF-8 `--delivery-files-json-file`; do not combine them.
 - Deliver only files that already exist inside the current Agent workspace. Gateway rejects missing files, non-files, workspace escapes, symlinks outside the workspace, and `.hedgehog/` paths. The command never creates, edits, moves, or deletes a file.
 - MCP Resource projection is limited to 64 MiB per file. Use an existing HTTP/Relay streaming path for larger artifacts.
 - The output retains both the structured `delivered`/`errors` result and a `resource_links` array. A non-empty `errors` array is a partial failure: report the failed files even when other files were delivered.

@@ -2,13 +2,18 @@
 name: gen-ppt
 description: >
     Generate presentations as editable PPTX from JSON (default) or self-contained HTML slides from Markdown when explicitly requested. Keep text, shapes, and tables editable; use native charts only for PowerPoint targets and PNG charts for Keynote/universal targets. Use for slide decks, pitch decks, meeting presentations, PowerPoint/PPTX, HTML/web slides, Markdown-to-slides, and interactive browser presentations. Does not create .key files, Google Slides-only exports, or video.
-version: 2.3.0
+version: 2.4.0
 compatibility: Requires Node.js >=18 in the Hermes terminal runtime.
 prerequisites:
   commands: [node, npm]
 ---
 
 # GenPPT — Presentation Generator
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 ## Choose the output
 
@@ -39,7 +44,7 @@ node ${HERMES_SKILL_DIR}/scripts/validate-pptx.mjs <output.pptx> [--libreoffice]
 
 `--keynote` recognizes Keynote and Keynote Creator Studio and rejects PptxGenJS decks that retain native charts. Use `--powerpoint` as the release gate for PowerPoint delivery; if unavailable, report the deck as PowerPoint-unverified. LibreOffice is supplementary and cannot certify PowerPoint or Keynote behavior. Never label a structural-only run as viewer-validated.
 
-5. Deliver only the exact tested artifact. Give every revision a unique basename containing GenPPT `v2.3.0` plus a task ID or timestamp; report its absolute path, byte count, and SHA-256.
+5. Deliver only the exact tested artifact. Give every revision a unique basename containing GenPPT `v2.4.0` plus a task ID or timestamp; report its absolute path, byte count, and SHA-256.
 
 ### Configuration essentials
 
@@ -89,9 +94,13 @@ node ${HERMES_SKILL_DIR}/scripts/md-to-slides.mjs <input.md> <output.html> [--th
 
 Themes: `fintech` (default), `oldmoney`, `bloomberg`, `economist`, `saas`, `mist`, `twilight`, `parchment`, `azure`, `gravel`. Use `--theme=list` to inspect them or `--theme=none` for PptxGenJS defaults in PPTX mode.
 
+Install the packages declared in this Skill's `package.json` before first use:
+
 ```bash
-cd "${HERMES_SKILL_DIR}" && npm install
+npm install --prefix "<skill_path>"
 ```
+
+Replace `<skill_path>` with the directory containing this `SKILL.md`. Run the command again if `node_modules` is absent, after reinstalling/updating the Skill, or when Node reports `Cannot find package` / `Cannot find module`.
 
 Requires Node.js 18+ and installs `pptxgenjs@4.0.1`, `jszip@3.10.1`, `saxes@6.0.0`, `marked`, and `highlight.js`.
 

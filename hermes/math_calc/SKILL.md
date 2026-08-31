@@ -1,6 +1,6 @@
 ---
 name: math_calc
-version: 1.0.0
+version: 1.1.0
 description: >
     Safe mathematical expression evaluator. Supports arithmetic, exponents,
     parentheses, trigonometry, logarithms, factorial, conditionals, and constants
@@ -13,6 +13,11 @@ prerequisites:
 
 # Math Calculator
 
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+
 A safe mathematical expression evaluator built on the expr-eval parser. Supports arithmetic operations, trigonometric functions, logarithms, factorials, conditional expressions, and more.
 
 ## Runtime
@@ -21,11 +26,13 @@ A safe mathematical expression evaluator built on the expr-eval parser. Supports
 
 ## Dependencies
 
-Install before first use:
+Install the packages declared in this Skill's `package.json` before first use:
 
 ```bash
-cd "${HERMES_SKILL_DIR}" && npm install
+npm install --prefix "<skill_path>"
 ```
+
+Replace `<skill_path>` with the directory containing this `SKILL.md`. Run the command again if `node_modules` is absent, after reinstalling/updating the Skill, or when Node reports `Cannot find package` / `Cannot find module`.
 
 ## Usage
 

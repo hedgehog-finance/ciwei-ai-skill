@@ -5,13 +5,18 @@ description: >
     Triggers: technical indicator, RSI, MACD, SMA, EMA, Bollinger, stochastic, KDJ, ATR, ADX, SuperTrend,
     candlestick pattern, doji, hammer, engulfing, K-line pattern, 技术指标, K线形态.
     Blocking: fetching live market data, backtesting, portfolio management, chart rendering.
-version: 1.0.0
+version: 1.1.0
 compatibility: Requires Node.js >=18 in the Hermes terminal runtime.
 prerequisites:
   commands: [node, npm]
 ---
 
 # Tech-Indicators — 本地技术指标计算引擎
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 纯本地计算 75 个技术指标和 K 线形态识别，基于 fast-technical-indicators 库，无需网络请求。
 
@@ -116,8 +121,10 @@ node ${HERMES_SKILL_DIR}/scripts/calc.mjs --list
 
 ## Dependencies
 
+Install the packages declared in this Skill's `package.json` before first use:
+
 ```bash
-cd "${HERMES_SKILL_DIR}" && npm install
+npm install --prefix "<skill_path>"
 ```
 
-Installs `fast-technical-indicators` and `markdown-table` locally.
+Replace `<skill_path>` with the directory containing this `SKILL.md`. This installs `fast-technical-indicators` and `markdown-table` locally. Run the command again if `node_modules` is absent, after reinstalling/updating the Skill, or when Node reports `Cannot find package` / `Cannot find module`.

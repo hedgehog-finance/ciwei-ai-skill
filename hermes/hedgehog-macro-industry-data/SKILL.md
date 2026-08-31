@@ -5,7 +5,7 @@ description: >
   US: Treasury yields.
   NOT for: stock quotes/fundamentals/financials (→ hedgehog-company-index-data); news/announcements.
   Triggers: macro data, interest rate, CPI, PPI, PMI, M1, M2, social financing, money supply, US Treasury yield.
-version: 1.7.0
+version: 1.8.0
 metadata:
   hermes:
     tags: [finance, macroeconomics, industry-data]
@@ -20,6 +20,11 @@ required_environment_variables:
 ---
 
 # 宏观经济数据查询
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 ## 1. 核心调度与全局约定
 
@@ -36,7 +41,10 @@ hermes config set CIWEIAI_API_KEY "your-api-key-here"
 **统一执行脚本**：
 ```bash
 node ${HERMES_SKILL_DIR}/scripts/call_api.js --api <接口名> --params '<JSON字符串>' --dir <sessionTaskDir>
+node ${HERMES_SKILL_DIR}/scripts/call_api.js --api <接口名> --params-file <params.json> --dir <sessionTaskDir>
 ```
+
+简单参数使用 `--params`；长、深层嵌套、自动生成或引号较多的 UTF-8 JSON 使用 `--params-file`。两者不能同时使用。
 
 **输出策略（脚本自动决定）**：
 - 本 skill 所有接口均返回时间序列数据，脚本自动保存为 `data-*.json`，stdout 仅输出文件指针

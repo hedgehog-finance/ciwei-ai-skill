@@ -5,13 +5,18 @@ description: >
     Applicable: document conversion, format transformation, report export, content extraction.
     Triggers: convert document, PDF to markdown, docx to markdown, docx to html, html to markdown, markdown to pdf, html to pdf.
     Blocking: password-protected documents, scanned PDF OCR, interactive PDF forms.
-version: 2.0.0
+version: 2.1.0
 compatibility: Requires Node.js >=18 in the Hermes terminal runtime.
 prerequisites:
   commands: [node, npm]
 ---
 
 # DocConvert — Multi-Format Document Conversion
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 Convert between Markdown, HTML, PDF, and DOCX.
 
@@ -109,11 +114,13 @@ Environment variables (fallback when not set in config file):
 
 ## Dependencies
 
-Install in the Hermes skill directory before first use:
+Install the packages declared in this Skill's `package.json` before first use:
 
 ```bash
-cd "${HERMES_SKILL_DIR}" && npm install
+npm install --prefix "<skill_path>"
 ```
+
+Replace `<skill_path>` with the directory containing this `SKILL.md`. Run the command again if `node_modules` is absent, after reinstalling/updating the Skill, or when Node reports `Cannot find package` / `Cannot find module`.
 
 - `md-to-pdf`, `puppeteer` — PDF generation (puppeteer also powers ECharts-aware HTML→PDF)
 - `mammoth` — DOCX parsing

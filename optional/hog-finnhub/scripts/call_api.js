@@ -9,6 +9,7 @@
  *
  * Usage:
  *   node call_api.js --api <api-name> --params '<JSON-string>'
+ *   node call_api.js --api <api-name> --params-file <params.json>
  *
  * Examples:
  *   node call_api.js --api getQuote        --params '{"symbol":"AAPL"}'
@@ -155,6 +156,31 @@ function parseArgs(argv) {
     }
   }
   return args;
+}
+
+function readJsonParams(args) {
+  if (args.params === true) throw new Error('--params requires a JSON value');
+  if (args['params-file'] === true) throw new Error('--params-file requires a file path');
+  if (args.params !== undefined && args['params-file'] !== undefined) {
+    throw new Error('--params and --params-file are mutually exclusive');
+  }
+  if (args.params === undefined && args['params-file'] === undefined) return {};
+
+  let raw = args.params;
+  let source = '--params';
+  if (args['params-file'] !== undefined) {
+    source = `--params-file ${args['params-file']}`;
+    try {
+      raw = fs.readFileSync(args['params-file'], 'utf8');
+    } catch (error) {
+      throw new Error(`Unable to read ${source}: ${error.message}`);
+    }
+  }
+  try {
+    return JSON.parse(raw.replace(/^\uFEFF/, ""));
+  } catch (error) {
+    throw new Error(`${source} is not valid JSON: ${error.message}`);
+  }
 }
 
 // ─── HTTP Request (with 429 retry) ─────────────────────────────────────────────
@@ -324,14 +350,7 @@ async function main() {
     process.exit(1);
   }
 
-  let params = {};
-  if (args.params) {
-    try {
-      params = JSON.parse(args.params);
-    } catch (err) {
-      throw new Error(`--params is not valid JSON: ${err.message}`);
-    }
-  }
+  const params = readJsonParams(args);
 
   const result = await callApi(args.api, params);
   console.log(JSON.stringify(result, null, 2));

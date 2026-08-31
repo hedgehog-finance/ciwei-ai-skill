@@ -1,6 +1,6 @@
 ---
 name: deliver_files
-version: 2.0.0
+version: 2.1.0
 description: >
     Deliver existing workspace files as restricted Hedgehog Gateway MCP Resource
     Links. Use when reports, charts, documents, or other generated artifacts must
@@ -11,6 +11,11 @@ prerequisites:
 ---
 
 # Deliver Files
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 Call the Gateway General MCP `2026-07-28` `deliver_files` tool to expose existing workspace files as downloadable, owner-restricted Resource Links. The CLI supplies the required Bearer authentication, modern MCP headers, and `_meta` envelope.
 
@@ -43,24 +48,23 @@ Tool visibility is Profile-scoped. If the active Token does not expose `deliver_
 Use Node.js 18 or newer. Paths may be relative to the current Gateway Agent workspace or absolute paths inside that workspace.
 
 ```bash
-node ${HERMES_SKILL_DIR}/cli.mjs tasks/task-123/report.pdf tasks/task-123/chart.png \
-  --summary "Analysis artifacts" --task-id task-123
+node ${HERMES_SKILL_DIR}/cli.mjs tasks/task-123/report.pdf tasks/task-123/chart.png --summary "Analysis artifacts" --task-id task-123
 
-node ${HERMES_SKILL_DIR}/cli.mjs --files-json \
-  '[{"path":"tasks/task-123/report.pdf","summary":"Report"}]' \
-  --task-id task-123
+node ${HERMES_SKILL_DIR}/cli.mjs --files-json '[{"path":"tasks/task-123/report.pdf","summary":"Report"}]' --task-id task-123
+node ${HERMES_SKILL_DIR}/cli.mjs --files-json-file <files.json> --task-id task-123
 ```
 
 | Parameter | Required | Meaning |
 |---|---|---|
 | `<path...>` | Yes* | One or more files |
 | `--files-json '<json>'` | Yes* | Non-empty array of `{path, summary?}`; mutually exclusive with positional paths |
+| `--files-json-file <path>` | Yes* | UTF-8 JSON file containing the same non-empty array; mutually exclusive with other input forms |
 | `--summary S` | No | Summary applied to positional paths |
 | `--task-id ID` | No | Associated workflow Task ID |
 | `--url U` | No | Override the MCP endpoint |
 | `--token T` | No | Override the MCP Bearer Token |
 
-`*` Supply exactly one file-input form.
+`*` Supply exactly one file-input form. Prefer inline `--files-json` for a short, simple array and `--files-json-file` for long, generated, nested, or quote-heavy JSON.
 
 ## Output
 

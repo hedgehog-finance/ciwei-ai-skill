@@ -386,7 +386,7 @@ async function main() {
   const rest = stripped.slice(1);
   if (!cmd || cmd === "-h" || cmd === "--help") {
     console.log(
-      "hog-memory v1.2.0 — Cross-session persistent memory CLI\n" +
+      "hog-memory v1.3.0 — Cross-session persistent memory CLI\n" +
       "\n" +
       "Usage:\n" +
       "  hog-memory save <content> [--task-type TYPE] [--tags a,b] [--task-desc DESC] [--work-id WORK_ID]\n" +

@@ -18,9 +18,11 @@
  *
  * Usage:
  *   node ./scripts/relative.mjs <method> '<params-json>'
+ *   node ./scripts/relative.mjs <method> --params-file <params.json>
  */
 
 import { fileURLToPath } from 'node:url';
+import { readJsonParams } from './read-params.mjs';
 
 // ─── 工具函数 ────────────────────────────────────────────────────────────────
 
@@ -596,7 +598,7 @@ function main() {
 
   if (argv.length < 1 || argv[0] === '--help' || argv[0] === '-h') {
     const help = VALID_METHODS.map((m) => `  ${m.padEnd(20)} ${METHODS[m].desc}`).join('\n');
-    console.log(`用法: node relative.mjs <method> '<params-json>'\n\n支持方法:\n${help}`);
+    console.log(`用法: node relative.mjs <method> '<params-json>'\n      node relative.mjs <method> --params-file <params.json>\n\n支持方法:\n${help}`);
     process.exit(0);
   }
 
@@ -606,14 +608,7 @@ function main() {
     throw new Error(`不支持的方法: ${method}\n支持: ${VALID_METHODS.join(', ')}`);
   }
 
-  let params = {};
-  if (argv[1]) {
-    try {
-      params = JSON.parse(argv[1]);
-    } catch (err) {
-      throw new Error(`参数 JSON 解析失败: ${err.message}`);
-    }
-  }
+  const params = readJsonParams(argv.slice(1));
 
   const result = def.exec(params);
   console.log(JSON.stringify({ method, ...result }, null, 2));

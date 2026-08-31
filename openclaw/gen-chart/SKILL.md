@@ -3,10 +3,15 @@ name: gen-chart
 description: >
     Generate charts as PNG/SVG (Vega-Lite v6, Mermaid) or ECharts JSON configurations. You MUST select either “Image Mode” or “ECharts Mode” before generating data.
     Triggers: chart, diagram, graph, flowchart, sequence diagram, mermaid, vega, echarts.
-version: 2.3.1
+version: 2.4.0
 ---
 
 # GenChart — Chart & Diagram Generator
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 Generate charts (Vega-Lite v6) and diagrams (Mermaid) as PNG/SVG images, or ECharts JSON configs.
 Two usage scenarios: **Standalone Generation** and **In-text Embedding**.
@@ -134,7 +139,20 @@ Script auto-detects and fixes common LLM data issues (stderr warnings):
 | `gravel` | Gravel | `#73716D #868480 #989691 #A9A7A2 #B9B7B2 #C9C7C2` | `#F0EFEA` | Neutral grays |
 
 ## Dependencies
-Vega stack installed in `skills/gen-chart/node_modules/`: `vega` (`^6.3.1`), `vega-lite` (`^6.4.3`), `@resvg/resvg-js` (`^2.6.2`). Mermaid stack in `<hogagent_root>/node_modules/`: `@mermaid-js/mermaid-cli`, `puppeteer`.
+
+Install the packages declared in this Skill's `package.json` before first use:
+
+```bash
+npm install --prefix "<skill_path>"
+```
+
+Replace `<skill_path>` with the directory containing this `SKILL.md`. Run the command again if `node_modules` is absent, after reinstalling/updating the Skill, or when Node reports `Cannot find package` / `Cannot find module`.
+
+The local Vega stack is `vega` (`^6.3.1`), `vega-lite` (`^6.4.3`), and `@resvg/resvg-js` (`^2.6.2`). Mermaid rendering additionally expects `@mermaid-js/mermaid-cli` and `puppeteer`. If Mermaid reports that `mmdc` is missing, install those optional packages locally:
+
+```bash
+npm install --prefix "<skill_path>" --no-save @mermaid-js/mermaid-cli puppeteer
+```
 
 PNG rendering pipeline: `vega-chart.mjs` renders SVG first (`view.toSVG()`) then rasterizes with `@resvg/resvg-js` at 2x zoom (prebuilt native binary, no compilation). It does NOT use node-canvas — vega's `view.toCanvas()` is deliberately avoided because the `canvas` native package is fragile (prebuild download failures).
 

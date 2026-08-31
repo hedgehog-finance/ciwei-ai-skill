@@ -1,6 +1,6 @@
 ---
 name: web_fetch
-version: 1.0.0
+version: 1.1.0
 description: >
     Fetch a web page and extract its main content as Markdown.
     Uses Readability for article extraction and Turndown for HTML→Markdown conversion.
@@ -10,6 +10,11 @@ description: >
 
 # Web Fetch
 
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+
 Fetch a web page URL and extract its main content into clean Markdown format.
 
 ## Runtime
@@ -18,11 +23,13 @@ Fetch a web page URL and extract its main content into clean Markdown format.
 
 ## Dependencies
 
-Install before first use:
+Install the packages declared in this Skill's `package.json` before first use:
 
 ```bash
-cd <skill_path> && npm install
+npm install --prefix "<skill_path>"
 ```
+
+Replace `<skill_path>` with the directory containing this `SKILL.md`. Run the command again if `node_modules` is absent, after reinstalling/updating the Skill, or when Node reports `Cannot find package` / `Cannot find module`.
 
 ## Usage
 

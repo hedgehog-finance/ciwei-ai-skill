@@ -94,8 +94,7 @@ node scripts/call_api.js --api getForexRates --params '{"base":"USD"}'
 ### Query Economic Calendar (Specified Date Range)
 
 ```bash
-node scripts/call_api.js --api getEconomicCalendar \
-  --params '{"from":"2024-01-01","to":"2024-01-31"}'
+node scripts/call_api.js --api getEconomicCalendar --params '{"from":"2024-01-01","to":"2024-01-31"}'
 ```
 
 ---

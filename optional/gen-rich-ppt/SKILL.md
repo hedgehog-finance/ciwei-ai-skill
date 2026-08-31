@@ -1,5 +1,6 @@
 ---
 name: gen-rich-ppt
+version: 1.1.0
 description: >
   Generate polished, visually unified, image-based PowerPoint/PPTX decks from articles,
   reports, papers, notes, outlines, or ideas. Use when the user wants a rich visual
@@ -11,7 +12,30 @@ description: >
 
 # Gen Rich PPT
 
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+
 把文章、报告、论文、课程笔记、大纲或想法转换成视觉统一的图片式演示文稿。每页是一张完整的 16:9 图片，再由 `scripts/assemble_ppt.py` 组装为 `.pptx`。
+
+## 依赖安装
+
+首次使用前，先安装 `requirements.txt` 声明的 Python 包。将 `<skill_path>` 替换为本 `SKILL.md` 所在目录：
+
+PowerShell：
+
+```powershell
+python -m pip install -r "<skill_path>/requirements.txt"
+```
+
+Bash：
+
+```bash
+python3 -m pip install -r "<skill_path>/requirements.txt"
+```
+
+如果虚拟环境或依赖目录被删除、Skill 被重新安装/更新，或 Python 报告 `No module named ...`，请在执行生成脚本前重新运行安装命令。
 
 ## 核心约束
 
@@ -74,10 +98,7 @@ description: >
 不要把密钥写进 `SKILL.md`、提示词、仓库文件或提交记录。多个本地 Agent 共用同一台机器时，优先使用共享运行时配置；文件权限自动设为 `0600`。
 
 ```bash
-python3 {skill_root}/scripts/gen_rich_ppt_runtime.py config \
-  --api-key "your-image-api-key" \
-  --base-url "https://api.example.com/v1" \
-  --model "gpt-image-2"
+python3 {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-image-api-key" --base-url "https://api.example.com/v1" --model "gpt-image-2"
 ```
 
 也可以在启动 Agent 前设置环境变量：

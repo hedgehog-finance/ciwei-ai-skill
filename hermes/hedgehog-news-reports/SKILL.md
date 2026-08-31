@@ -6,7 +6,7 @@ description: >
   Best for: cross-content financial information search, news, research reports, announcements.
   NOT for: stock quotes, fundamentals, financial statements, Shenwan industry data.
   Triggers: financial information search, financial news, stock news, breaking news, research report, company announcement, financial report.
-version: 1.8.0
+version: 1.9.0
 metadata:
   hermes:
     tags: [finance, news, research-reports]
@@ -21,6 +21,11 @@ required_environment_variables:
 ---
 
 # 财经资讯数据
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 本 skill 通过接口统一搜索或分类查询财经快讯、新闻、研报以及上市公司公告。
 
@@ -51,6 +56,8 @@ hermes config set CIWEIAI_API_KEY "your-api-key-here"
 
 **执行方法**：
 `node ${HERMES_SKILL_DIR}/scripts/call_api.js --api <接口名> --params '<JSON>' --dir <sessionTaskDir>`
+
+复杂 JSON 改用：`node ${HERMES_SKILL_DIR}/scripts/call_api.js --api <接口名> --params-file <params.json> --dir <sessionTaskDir>`。简单参数使用 `--params`；长、深层嵌套、自动生成或引号较多的 UTF-8 JSON 使用 `--params-file`，两者不能同时使用。
 
 **输出策略（脚本自动决定）**：
 - 所有接口均自动保存为 `data-*.json`，stdout 仅输出文件指针

@@ -1,6 +1,6 @@
 ---
 name: hog-memory
-version: 1.2.0
+version: 1.3.0
 description: >
     Cross-session persistent memory. Save market insights, research conclusions,
     portfolio changes and quant strategies; search, update, delete and recall
@@ -11,6 +11,11 @@ prerequisites:
 ---
 
 # 跨会话持久记忆
+
+
+## Windows command compatibility
+
+On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
 
 提供金融投研 Agent 的长期记忆能力：保存、搜索、更新、删除、召回过去会话中的市场洞察、研究结论、持仓变动和量化策略。所有记忆通过 Gateway KB MCP Server 持久化存储，跨会话可用。
 
@@ -208,10 +213,7 @@ node ${HERMES_SKILL_DIR}/cli.mjs search "贵州茅台 近期走势" --stock-code
 **2. 产出重要结论后：保存为长期记忆**
 
 ```bash
-node ${HERMES_SKILL_DIR}/cli.mjs save "茅台 K 线出现双底形态，成交量显著放大，短线看多至 1850 附近" \
-  --task-type market_insight \
-  --tags "600519.SH,食品饮料,K线形态,双底" \
-  --task-desc "贵州茅台技术面研判"
+node ${HERMES_SKILL_DIR}/cli.mjs save "茅台 K 线出现双底形态，成交量显著放大，短线看多至 1850 附近" --task-type market_insight --tags "600519.SH,食品饮料,K线形态,双底" --task-desc "贵州茅台技术面研判"
 ```
 
 仅当上下文中明确提供了当前任务的 `work_id` 时才在上述命令末尾添加 `--work-id "$WORK_ID"`（其中 `$WORK_ID` 必须是已知的实际值）；未知时直接省略，不能使用占位值、会话 ID 或自行生成的 ID。
