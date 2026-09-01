@@ -10,7 +10,7 @@ A collection of skills adapted for the OpenClaw platform, containing 21 skill mo
 |-------|---------|-------------|
 | `hedgehog-company-index-data` | 1.11.0 | Query A-share company profiles, daily/minute quotes and financials, domestic/global index quotes and weights, Shenwan industry data, and trading calendars |
 | `hedgehog-daily-morning-briefing` | 2.2.5 | Pre-market intelligence brief — filters macro, sector and watchlist news to extract core logic |
-| `hedgehog-financial-report-analysis` | 1.3.0 | Financial report interpretation with context-aware anomaly analysis, audit-note checks, cash flow and risk |
+| `hedgehog-financial-report-analysis` | 1.3.1 | Financial report interpretation with context-aware anomaly analysis, audit-note checks, cash flow and risk |
 | `deliver_files` | 2.1.0 | Compatibility wrapper for restricted Gateway file delivery, now also available in `hog-gateway-tools` |
 | `hog-gateway-tools` | 3.5.0 | Authenticated General MCP CLI: task result reporting, restricted file delivery, Work context, Task Resource status, Knowledge, Memory, notifications, watchlist and resource recommendations |
 | `hedgehog-in-depth-analysis` | 2.2.2 | Probability-tree scenario analysis for major events (macro volatility / black swans / geopolitics / policy shifts), predicting high-probability paths and measuring market impact |

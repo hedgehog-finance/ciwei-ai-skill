@@ -5,7 +5,7 @@ description: >
   分析报表核心变化、增长质量、利润和资产质量、现金创造、成本研发、偿债能力及财务风险。
   适用：财报解读、年报/半年报/季报分析、财务排雷、财务质量分析。
   不适用：只查单个财务数字、公司基本面全景、行业竞争/护城河、估值、技术面或消息面分析。
-version: 1.3.0
+version: 1.3.1
 workflow_based: true
 compatibility: Requires Node.js >=18 in the Hermes terminal runtime.
 prerequisites:
