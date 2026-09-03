@@ -1,6 +1,6 @@
 {
   "name": "gen-rich-ppt",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "private": true,
   "license": "MIT",
   "description": "Generate polished image-based PowerPoint decks with built-in or OpenAI-compatible image models",

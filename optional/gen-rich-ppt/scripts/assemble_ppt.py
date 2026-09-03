@@ -14,6 +14,14 @@ import tempfile
 from typing import Dict, List, Optional, Tuple
 
 
+MAX_IMAGE_BYTES = 50 * 1024 * 1024
+MAX_TEXT_BYTES = 10 * 1024 * 1024
+MAX_SLIDES = 500
+MAX_IMAGE_DIMENSION = 32768
+MAX_IMAGE_PIXELS = 25_000_000
+MAX_PPTX_BYTES = 250 * 1024 * 1024
+
+
 def dependency_hint() -> str:
     runtime_home = os.path.expanduser(os.environ.get("GEN_RICH_PPT_HOME", "~/.gen-rich-ppt"))
     python = os.path.join(
@@ -27,7 +35,7 @@ def dependency_hint() -> str:
         "gen_rich_ppt_runtime.py",
     )
     return (
-        f"请运行: python3 {runtime_script} bootstrap\n"
+        f"请运行: {sys.executable} {runtime_script} bootstrap\n"
         f"或直接运行: {python} -m pip install -r "
         f"{os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'requirements.txt')}"
     )
@@ -58,12 +66,25 @@ def get_slide_images(ppt_project_dir: str) -> List[str]:
     # 只获取正式幻灯片图片，避免 sample_slide.png、草稿图或参考图被误装入 PPT。
     slide_name_pattern = re.compile(r"^slide_(\d+)\.(png|jpe?g|gif|bmp)$", re.IGNORECASE)
     image_files = []
+    slide_numbers = {}
     for file in os.listdir(origin_image_dir):
         file_path = os.path.join(origin_image_dir, file)
         if os.path.isfile(file_path):
             ext = os.path.splitext(file)[1].lower()
-            if ext in image_extensions and slide_name_pattern.match(file):
+            match = slide_name_pattern.match(file)
+            if ext in image_extensions and match:
+                number = int(match.group(1))
+                if number in slide_numbers:
+                    raise SystemExit(
+                        f"错误：重复页码 {number}: {slide_numbers[number]} 与 {file}"
+                    )
+                if os.path.getsize(file_path) > MAX_IMAGE_BYTES:
+                    raise SystemExit(f"错误：幻灯片图片超过 50MB: {file_path}")
+                slide_numbers[number] = file
                 image_files.append(file_path)
+
+    if len(image_files) > MAX_SLIDES:
+        raise SystemExit(f"错误：幻灯片数量超过 {MAX_SLIDES} 页上限")
 
     def slide_sort_key(path: str) -> Tuple[int, str]:
         filename = os.path.basename(path)
@@ -89,6 +110,8 @@ def load_speaker_notes(ppt_project_dir: str) -> Dict[int, str]:
     speech_path = os.path.join(ppt_project_dir, "speech.md")
     if not os.path.exists(speech_path):
         return {}
+    if not os.path.isfile(speech_path) or os.path.getsize(speech_path) > MAX_TEXT_BYTES:
+        raise SystemExit(f"错误：speech.md 必须是小于等于 10MB 的普通文件: {speech_path}")
 
     with open(speech_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -120,29 +143,38 @@ def load_speaker_notes(ppt_project_dir: str) -> Dict[int, str]:
     return notes
 
 
+def validate_slide_image(image_path: str) -> None:
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError(f"Pillow 未安装。{dependency_hint()}") from exc
+    try:
+        with Image.open(image_path) as image:
+            width, height = image.size
+            if (
+                width < 1
+                or height < 1
+                or width > MAX_IMAGE_DIMENSION
+                or height > MAX_IMAGE_DIMENSION
+                or width * height > MAX_IMAGE_PIXELS
+            ):
+                raise ValueError(
+                    f"图片尺寸必须小于等于 {MAX_IMAGE_DIMENSION}px/边和 {MAX_IMAGE_PIXELS} 总像素"
+                )
+            image.verify()
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"无效的幻灯片图片 {image_path}: {exc}") from exc
+
+
 def compress_image_if_needed(
     image_path: str,
     max_size_mb: float = 2.0,
     quality_step: int = 5
 ) -> Optional[str]:
-    """
-    如果图片超过指定大小，压缩图片并返回临时文件路径
-
-    Args:
-        image_path: 原始图片路径
-        max_size_mb: 最大文件大小（MB）
-        quality_step: 每次降低的质量步进
-
-    Returns:
-        str: 如果需要压缩，返回临时文件路径；否则返回 None
-    """
+    """如果图片超过指定大小，压缩图片并返回临时文件路径。"""
     max_size_bytes = max_size_mb * 1024 * 1024
-
-    # 检查原始文件大小
     file_size = os.path.getsize(image_path)
-
     if file_size <= max_size_bytes:
-        # 不需要压缩
         return None
 
     print(f"  图片大小 {file_size / 1024 / 1024:.2f}MB，需要压缩...")
@@ -150,15 +182,11 @@ def compress_image_if_needed(
     try:
         from PIL import Image
 
-        # 打开图片
-        img = Image.open(image_path)
-
-        # 转换 RGBA 到 RGB（如果需要保存为 JPEG）
-        if img.mode in ('RGBA', 'LA', 'P'):
-            background = Image.new('RGB', img.size, (255, 255, 255))
-            if img.mode == 'P':
-                img = img.convert('RGBA')
-            background.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+        with Image.open(image_path) as source:
+            img = source.convert("RGBA") if source.mode in ("RGBA", "LA", "P") else source.convert("RGB")
+        if img.mode == "RGBA":
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            background.paste(img, mask=img.split()[-1])
             img = background
 
         # 创建临时文件
@@ -259,6 +287,8 @@ def create_presentation(
                 print(f"警告：图片文件不存在: {image_path}")
                 continue
 
+            validate_slide_image(image_path)
+
             # 压缩图片（如果需要）
             compressed_path = compress_image_if_needed(image_path, max_size_mb=2.0)
 
@@ -295,8 +325,18 @@ def create_presentation(
         if output_dir and not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-        # 保存演示文稿
-        prs.save(output_path)
+        # 先写入同目录临时文件，再原子替换，避免失败时破坏已有输出。
+        temp_fd, temp_output_path = tempfile.mkstemp(
+            prefix=f".{os.path.basename(output_path)}.",
+            suffix=".tmp.pptx",
+            dir=output_dir or ".",
+        )
+        os.close(temp_fd)
+        prs.save(temp_output_path)
+        output_size = os.path.getsize(temp_output_path)
+        if output_size < 1 or output_size > MAX_PPTX_BYTES:
+            raise ValueError("生成的 PPTX 为空或超过 250MB 上限")
+        os.replace(temp_output_path, output_path)
         print(f"\n✓ PPT 文件已保存: {output_path}")
         print(f"  总页数: {len(image_files)}")
         if speaker_notes:
@@ -326,6 +366,11 @@ def create_presentation(
                         os.remove(temp_file)
                 except:
                     pass
+        if 'temp_output_path' in locals() and os.path.exists(temp_output_path):
+            try:
+                os.remove(temp_output_path)
+            except OSError:
+                pass
 
         return False
 
@@ -380,12 +425,16 @@ def main():
     args = parser.parse_args()
 
     # 确保输出文件有 .pptx 扩展名
+    if os.path.basename(args.output) != args.output:
+        parser.error("output 必须是文件名，不能包含目录；输出固定写入对应的 PPT 项目目录")
     output_filename = args.output
     if not output_filename.lower().endswith('.pptx'):
         output_filename += '.pptx'
 
     # 获取 PPT 名称（不含扩展名）
     ppt_name = os.path.splitext(os.path.basename(output_filename))[0]
+    if not ppt_name or ppt_name in {'.', '..'}:
+        parser.error("output 必须包含有效的 PPT 文件名")
 
     # 构建 PPT 项目目录
     ppt_project_dir = os.path.join(args.base_dir, ppt_name)

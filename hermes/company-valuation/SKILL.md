@@ -5,15 +5,26 @@ description: >
     absolute (DCF/DDM/rNPV/Black-Scholes), strategic (TAM-SAM-SOM/LTV-CAC/NRR).
     Triggers: valuation, intrinsic value, PE, PB, PS, DCF, DDM, PEG, EV/EBITDA, ARR, TAM, LTV/CAC, NRR, rNPV.
     Blocks: technical analysis, candlestick patterns, non-valuation financial calculations.
-version: 3.0.3
+version: 3.0.5
 ---
 
 # Company Valuation Engine
 
 
-## Windows command compatibility
+## Portable CLI parameters
 
-On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+When a documented CLI accepts a parameter object, use the same rule on every Agent and operating system; existing positional file inputs remain positional:
+
+1. When every business value is a non-empty, single-line `string | finite number | boolean`, pass it as a named argument (`--key value` or `--key=value`). Names are case-sensitive and are not normalized.
+2. When any value is an object, array, `null`, multiline text, a numeric/boolean-looking string that must remain a string, or contains difficult quoting, write the complete parameter object as UTF-8 JSON and pass the file option documented by this Skill.
+3. Agent-created parameter files must have a unique basename matching `tmp-<skill-name>-<unique-id>.json`, must not use the reserved `.hedgehog/` directory, and must be removed after the call when no longer needed. UTF-8 BOM is accepted.
+4. Do not inline nested JSON or combine flat arguments with a JSON/file payload. Create JSON with the Agent's file-writing capability, not `echo`, a shell heredoc, or PowerShell string assembly.
+
+POSIX/Git Bash form: `node '<script>' --key 'single-line value'` or `node '<script>' <file-option> '<workspace>/tmp-<skill-name>-<id>.json'`.
+
+PowerShell form: `node "<script>" --key "single-line value"` or `node "<script>" <file-option> "<workspace>\\tmp-<skill-name>-<id>.json"`.
+
+On Windows, use PowerShell or a verified Git for Windows Bash; `cmd.exe` is unsupported. Keep each command on one physical line. The process runs with the current Agent user's permissions and that Agent's native sandbox; HogAgent marks its Windows shell as `UNSANDBOXED`.
 
 ## Overview
 
@@ -30,12 +41,12 @@ On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Kee
 ## Invocation
 
 ```bash
-node scripts/<script>.mjs <method> '<params-json>'
-node scripts/<script>.mjs <method> --params-file <params.json>
+node scripts/relative.mjs pe --marketCap 1000000000 --netIncome 80000000
+node scripts/<script>.mjs <method> --params-file '<workspace>/tmp-company-valuation-<id>.json'
 node scripts/<script>.mjs --help
 ```
 
-Use inline JSON only for short, simple parameters. Use `--params-file` for long, nested, generated, or quote-heavy UTF-8 JSON.
+Use named arguments when all business values are safe top-level scalars. For objects, arrays, `null`, multiline text, or difficult quoting, write a unique UTF-8 `tmp-*.json` and use `--params-file`. Payload blocks below are file contents, and positional JSON is compatibility-only.
 
 ## Method Classification
 
@@ -158,8 +169,8 @@ TTM rules (all based on cumulative values, subtraction removes overlap):
 
 #### 1. pe — Static P/E
 
-```bash
-node scripts/relative.mjs pe '{"marketCap":300000,"netIncome":20000,"industryPE":18,"totalShare":50000}'
+```jsonc
+{"marketCap":300000,"netIncome":20000,"industryPE":18,"totalShare":50000}
 ```
 
 | Param | Type | Req | Desc |
@@ -173,11 +184,11 @@ node scripts/relative.mjs pe '{"marketCap":300000,"netIncome":20000,"industryPE"
 
 #### 2. pe-ttm — Trailing P/E (TTM)
 
-```bash
-# Direct mode
-node scripts/relative.mjs pe-ttm '{"marketCap":300000,"ttmNetProfit":30000,"totalShare":50000,"industryPE":15}'
-# Auto mode (reports array)
-node scripts/relative.mjs pe-ttm '{"marketCap":300000,"reports":[{"end_date":"20250331","n_income_attr_p":8000},{"end_date":"20241231","n_income_attr_p":25000},{"end_date":"20240331","n_income_attr_p":7000}],"totalShare":50000,"industryPE":15}'
+```jsonc
+// Direct mode
+{"marketCap":300000,"ttmNetProfit":30000,"totalShare":50000,"industryPE":15}
+// Auto mode (reports array)
+{"marketCap":300000,"reports":[{"end_date":"20250331","n_income_attr_p":8000},{"end_date":"20241231","n_income_attr_p":25000},{"end_date":"20240331","n_income_attr_p":7000}],"totalShare":50000,"industryPE":15}
 ```
 
 | Param | Type | Req | Default | Desc |
@@ -190,8 +201,8 @@ node scripts/relative.mjs pe-ttm '{"marketCap":300000,"reports":[{"end_date":"20
 
 #### 3. pb — Price/Book
 
-```bash
-node scripts/relative.mjs pb '{"marketCap":300000,"equityToParent":200000,"totalShare":50000,"industryPB":1.5}'
+```jsonc
+{"marketCap":300000,"equityToParent":200000,"totalShare":50000,"industryPB":1.5}
 ```
 
 | Param | Type | Req | Desc |
@@ -202,8 +213,8 @@ node scripts/relative.mjs pb '{"marketCap":300000,"equityToParent":200000,"total
 
 #### 4. ps — Static P/S
 
-```bash
-node scripts/relative.mjs ps '{"marketCap":300000,"revenue":50000,"industryPS":8,"totalShare":50000}'
+```jsonc
+{"marketCap":300000,"revenue":50000,"industryPS":8,"totalShare":50000}
 ```
 
 | Param | Type | Req | Desc |
@@ -214,8 +225,8 @@ node scripts/relative.mjs ps '{"marketCap":300000,"revenue":50000,"industryPS":8
 
 #### 5. ps-ttm — Trailing P/S (TTM)
 
-```bash
-node scripts/relative.mjs ps-ttm '{"marketCap":300000,"ttmRevenue":120000,"totalShare":50000,"peerPS":2.5}'
+```jsonc
+{"marketCap":300000,"ttmRevenue":120000,"totalShare":50000,"peerPS":2.5}
 ```
 
 | Param | Type | Req | Default | Desc |
@@ -229,8 +240,8 @@ node scripts/relative.mjs ps-ttm '{"marketCap":300000,"ttmRevenue":120000,"total
 
 #### 6. ev-ebitda
 
-```bash
-node scripts/relative.mjs ev-ebitda '{"marketCap":300000,"totalDebt":50000,"cash":30000,"ebitda":40000}'
+```jsonc
+{"marketCap":300000,"totalDebt":50000,"cash":30000,"ebitda":40000}
 ```
 
 | Param | Type | Req | Desc |
@@ -242,16 +253,16 @@ node scripts/relative.mjs ev-ebitda '{"marketCap":300000,"totalDebt":50000,"cash
 
 #### 7. ev-revenue
 
-```bash
-node scripts/relative.mjs ev-revenue '{"marketCap":300000,"totalDebt":50000,"cash":30000,"revenue":100000}'
+```jsonc
+{"marketCap":300000,"totalDebt":50000,"cash":30000,"revenue":100000}
 ```
 
 Same as ev-ebitda but with `revenue` instead of `ebitda`.
 
 #### 8. peg — PEG Ratio
 
-```bash
-node scripts/relative.mjs peg '{"pe":20,"earningsGrowthRate":0.25,"targetPEG":1.0,"netIncome":20000,"totalShare":50000}'
+```jsonc
+{"pe":20,"earningsGrowthRate":0.25,"targetPEG":1.0,"netIncome":20000,"totalShare":50000}
 ```
 
 | Param | Type | Req | Default | Desc |
@@ -264,8 +275,8 @@ node scripts/relative.mjs peg '{"pe":20,"earningsGrowthRate":0.25,"targetPEG":1.
 
 #### 9. arr — ARR Multiples
 
-```bash
-node scripts/relative.mjs arr '{"marketCap":500000,"totalDebt":50000,"cash":30000,"arr":60000,"industryARRMultiple":12}'
+```jsonc
+{"marketCap":500000,"totalDebt":50000,"cash":30000,"arr":60000,"industryARRMultiple":12}
 ```
 
 | Param | Type | Req | Default | Desc |
@@ -278,8 +289,8 @@ node scripts/relative.mjs arr '{"marketCap":500000,"totalDebt":50000,"cash":3000
 
 #### 10. p-active-user — Per-User Value (MAU/DAU)
 
-```bash
-node scripts/relative.mjs p-active-user '{"marketCap":500000,"activeUsers":80000000,"userType":"MAU","industryValuePerUser":0.01}'
+```jsonc
+{"marketCap":500000,"activeUsers":80000000,"userType":"MAU","industryValuePerUser":0.01}
 ```
 
 | Param | Type | Req | Default | Desc |
@@ -291,8 +302,8 @@ node scripts/relative.mjs p-active-user '{"marketCap":500000,"activeUsers":80000
 
 #### 11. p-gmv
 
-```bash
-node scripts/relative.mjs p-gmv '{"marketCap":800000,"gmv":2000000,"industryPGmv":0.5}'
+```jsonc
+{"marketCap":800000,"gmv":2000000,"industryPGmv":0.5}
 ```
 
 | Param | Type | Req | Desc |
@@ -303,8 +314,8 @@ node scripts/relative.mjs p-gmv '{"marketCap":800000,"gmv":2000000,"industryPGmv
 
 #### 12. ev-fcf — EV/Free Cash Flow
 
-```bash
-node scripts/relative.mjs ev-fcf '{"marketCap":500000,"totalDebt":50000,"cash":30000,"freeCashFlow":40000,"industryEvFcf":15}'
+```jsonc
+{"marketCap":500000,"totalDebt":50000,"cash":30000,"freeCashFlow":40000,"industryEvFcf":15}
 ```
 
 | Param | Type | Req | Desc |
@@ -323,8 +334,8 @@ node scripts/relative.mjs ev-fcf '{"marketCap":500000,"totalDebt":50000,"cash":3
 
 ##### dcf — Basic DCF (10-year growth-driven projection)
 
-```bash
-node scripts/absolute.mjs dcf '{"firstFreeCashFlow":50,"growthRates":[0.15,0.05],"terminalFcfMultiple":20,"discountRate":0.10}'
+```jsonc
+{"firstFreeCashFlow":50,"growthRates":[0.15,0.05],"terminalFcfMultiple":20,"discountRate":0.10}
 ```
 
 | Param | Type | Req | Default | Desc |
@@ -337,14 +348,14 @@ node scripts/absolute.mjs dcf '{"firstFreeCashFlow":50,"growthRates":[0.15,0.05]
 
 ##### dcf-per-share — Intrinsic Value Per Share
 
-```bash
-node scripts/absolute.mjs dcf-per-share '{"firstFreeCashFlow":50,"growthRates":[0.15,0.05],"discountRate":0.10,"sharesOutstanding":10,"netDebt":200,"currentPrice":80}'
+```jsonc
+{"firstFreeCashFlow":50,"growthRates":[0.15,0.05],"discountRate":0.10,"sharesOutstanding":10,"netDebt":200,"currentPrice":80}
 ```
 
 | Param | Type | Req | Default | Desc |
 |-------|------|-----|---------|------|
 | firstFreeCashFlow | number | yes | — | First-year FCF |
-| sharesOutstanding | number | yes | — | Total shares |
+| sharesOutstanding | number | either | — | Total shares (`totalShares` is accepted as an alias) |
 | netDebt | number | opt | 0 | Net debt (or totalDebt + cash) |
 | totalDebt | number | opt | 0 | Total debt |
 | cash | number | opt | 0 | Cash |
@@ -353,8 +364,8 @@ node scripts/absolute.mjs dcf-per-share '{"firstFreeCashFlow":50,"growthRates":[
 
 ##### wacc — Weighted Average Cost of Capital (CAPM)
 
-```bash
-node scripts/absolute.mjs wacc '{"riskFreeRate":0.025,"beta":1.2,"equityRiskPremium":0.06,"costOfDebt":0.035,"taxRate":0.15}'
+```jsonc
+{"riskFreeRate":0.025,"beta":1.2,"equityRiskPremium":0.06,"costOfDebt":0.035,"taxRate":0.15}
 ```
 
 | Param | Type | Req | Default | Desc |
@@ -371,8 +382,8 @@ node scripts/absolute.mjs wacc '{"riskFreeRate":0.025,"beta":1.2,"equityRiskPrem
 
 ##### sensitivity — Sensitivity Analysis Matrix
 
-```bash
-node scripts/absolute.mjs sensitivity '{"firstFreeCashFlow":50,"growthRates":[0.12,0.05],"discountRate":0.10,"terminalFcfMultiple":15,"sharesOutstanding":10,"netDebt":200}'
+```jsonc
+{"firstFreeCashFlow":50,"growthRates":[0.12,0.05],"discountRate":0.10,"terminalFcfMultiple":15,"sharesOutstanding":10,"netDebt":200}
 ```
 
 Output uses the Vega-Lite v6 chart contract. The command returns `method: "sensitivity"` plus the top-level `sensitivity` and `inputs` objects.
@@ -400,8 +411,8 @@ Output uses the Vega-Lite v6 chart contract. The command returns `method: "sensi
 
 ##### fcf-series — Custom FCF Sequence
 
-```bash
-node scripts/absolute.mjs fcf-series '{"fcfSeries":[50,58,67,75,82,88,93,97,100,103],"discountRate":0.09,"terminalFcfMultiple":18}'
+```jsonc
+{"fcfSeries":[50,58,67,75,82,88,93,97,100,103],"discountRate":0.09,"terminalFcfMultiple":18}
 ```
 
 | Param | Type | Req | Default | Desc |
@@ -414,13 +425,13 @@ node scripts/absolute.mjs fcf-series '{"fcfSeries":[50,58,67,75,82,88,93,97,100,
 
 #### DDM — Dividend Discount Model
 
-```bash
-# Single-stage (Gordon Growth)
-node scripts/absolute.mjs ddm '{"dividend":2,"growthRate":0.05,"discountRate":0.10}'
-# Two-stage
-node scripts/absolute.mjs ddm '{"dividend":2,"growthRate":0.03,"discountRate":0.10,"highGrowthRate":0.15,"highGrowthYears":5}'
-# Three-stage
-node scripts/absolute.mjs ddm '{"dividend":2,"growthRate":0.03,"discountRate":0.10,"highGrowthRate":0.15,"highGrowthYears":5,"transitionYears":3}'
+```jsonc
+// Single-stage (Gordon Growth)
+{"dividend":2,"growthRate":0.05,"discountRate":0.10}
+// Two-stage
+{"dividend":2,"growthRate":0.03,"discountRate":0.10,"highGrowthRate":0.15,"highGrowthYears":5}
+// Three-stage
+{"dividend":2,"growthRate":0.03,"discountRate":0.10,"highGrowthRate":0.15,"highGrowthYears":5,"transitionYears":3}
 ```
 
 | Param | Type | Req | Desc |
@@ -434,8 +445,8 @@ node scripts/absolute.mjs ddm '{"dividend":2,"growthRate":0.03,"discountRate":0.
 
 #### rnpv — Risk-Adjusted NPV
 
-```bash
-node scripts/absolute.mjs rnpv '{"pipeline":[{"name":"DrugA","cashFlows":[500,1000,2000],"discountRate":0.10,"probability":0.6,"initialCost":200},{"name":"DrugB","cashFlows":[300,800,1500],"discountRate":0.10,"probability":0.3,"initialCost":150}]}'
+```jsonc
+{"pipeline":[{"name":"DrugA","cashFlows":[500,1000,2000],"discountRate":0.10,"probability":0.6,"initialCost":200},{"name":"DrugB","cashFlows":[300,800,1500],"discountRate":0.10,"probability":0.3,"initialCost":150}]}
 ```
 
 | Param | Type | Req | Desc |
@@ -449,8 +460,8 @@ node scripts/absolute.mjs rnpv '{"pipeline":[{"name":"DrugA","cashFlows":[500,10
 
 #### black-scholes — Option Pricing
 
-```bash
-node scripts/absolute.mjs black-scholes '{"S":100,"K":100,"T":1,"r":0.05,"sigma":0.3}'
+```jsonc
+{"S":100,"K":100,"T":1,"r":0.05,"sigma":0.3}
 ```
 
 | Param | Type | Req | Default | Desc |
@@ -470,8 +481,8 @@ Output: callPrice, putPrice, d1, d2, Greeks (delta, gamma, vega, theta, rho).
 
 #### tam-sam-som — Market Sizing → Valuation
 
-```bash
-node scripts/strategic.mjs tam-sam-som '{"tam":1000,"serviceableRatio":0.3,"marketShare":0.05,"targetNetMargin":0.2,"industryPS":8}'
+```jsonc
+{"tam":1000,"serviceableRatio":0.3,"marketShare":0.05,"industryPS":8}
 ```
 
 | Param | Type | Req | Default | Desc |
@@ -479,16 +490,16 @@ node scripts/strategic.mjs tam-sam-som '{"tam":1000,"serviceableRatio":0.3,"mark
 | tam | number | yes | — | Total addressable market |
 | serviceableRatio | number | opt | 0.3 | SAM/TAM ratio |
 | marketShare | number | yes | — | Target market share |
-| targetNetMargin | number | opt | 0 | Target net margin |
+| targetNetMargin | number | required with P/E | — | Target net margin used to derive SOM net profit |
 | industryPS | number | either | — | Industry P/S multiple |
 | industryPE | number | either | — | Industry P/E multiple |
 
-Logic: SAM = TAM × ratio → SOM = SAM × share → SOM_revenue = SOM × margin → Valuation = SOM_revenue × P/S (or P/E)
+Logic: SAM = TAM × ratio → SOM revenue = SAM × share. P/S valuation uses SOM revenue directly; P/E valuation requires `targetNetMargin` and uses SOM revenue × margin as net profit.
 
 #### ltv-cac — Unit Economics → DCF
 
-```bash
-node scripts/strategic.mjs ltv-cac '{"arpu":100,"grossMargin":0.7,"churnRate":0.05,"cac":200,"currentUsers":10000,"userGrowthRate":0.3,"discountRate":0.10}'
+```jsonc
+{"arpu":100,"grossMargin":0.7,"churnRate":0.05,"cac":200,"currentUsers":10000,"userGrowthRate":0.3,"discountRate":0.10}
 ```
 
 | Param | Type | Req | Default | Desc |
@@ -508,8 +519,8 @@ Logic: LTV = ARPU × margin × (1/churnRate) → yearly FCF projection → DCF d
 
 #### nrr — Net Revenue Retention ★ AI SaaS
 
-```bash
-node scripts/strategic.mjs nrr '{"currentARR":5000000,"nrr":1.25,"userGrowthRate":0.3,"projectionYears":3,"industryPS":10}'
+```jsonc
+{"currentARR":5000000,"nrr":1.25,"userGrowthRate":0.3,"projectionYears":3,"industryPS":10}
 ```
 
 | Param | Type | Req | Default | Desc |
@@ -549,3 +560,7 @@ Replace `<skill_path>` with the directory containing this `SKILL.md`. Run the co
 
 - `discounted-cash-flow` (DCF methods)
 - Node.js >= 18 (ESM)
+
+## Execution safety
+
+Parameter files are limited to 10 MiB and invalid, non-object, mixed, empty, multiline, or duplicate inputs fail before calculation. Numeric inputs must be finite JSON numbers rather than numeric strings. TTM reports, growth/FCF arrays, rNPV pipelines, sensitivity grids, and option domains are size- and type-checked before calculation. These scripts perform local calculations only: they do not start subprocesses or make network requests, and they write results only to stdout.

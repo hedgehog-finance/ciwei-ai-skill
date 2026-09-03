@@ -15,43 +15,37 @@
  *                         Use --theme=list to show all financial themes.
  */
 
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
+import { writeFileSync, existsSync, mkdtempSync, renameSync, rmSync, accessSync, constants, statSync, unlinkSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { resolve, dirname, join } from "node:path";
+import { basename, resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir, platform } from "node:os";
+import { createRequire } from "node:module";
 import { resolveTheme, toMermaidThemeVars, isDark, THEME_NAMES } from "./themes.mjs";
+import { parseChartRenderArgs } from "./cli-args.mjs";
 
 const IS_WIN = platform() === "win32";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
-const args = process.argv.slice(2);
-
-// Parse arguments
-let inputPath, outputPath, format, palette, themeArg;
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === "-o" || args[i] === "--output") {
-    outputPath = args[++i];
-  } else if (args[i] === "--spec") {
-    inputPath = args[++i];
-  } else if (args[i].startsWith("--spec=")) {
-    inputPath = args[i].substring("--spec=".length);
-  } else if (args[i].startsWith("--format=")) {
-    format = args[i].split("=")[1];
-  } else if (args[i].startsWith("--palette=")) {
-    palette = args[i].substring("--palette=".length);
-  } else if (args[i].startsWith("--theme=")) {
-    themeArg = args[i].substring("--theme=".length);
-  } else if (!inputPath) {
-    inputPath = args[i];
-  } else if (!outputPath) {
-    outputPath = args[i];
-  }
+let parsedArgs;
+try {
+  parsedArgs = parseChartRenderArgs(process.argv.slice(2));
+} catch (error) {
+  console.error(`Error: ${error.message}`);
+  process.exit(1);
 }
+const { spec: inputPath, output: outputPath, palette, theme: themeArg } = parsedArgs.options;
+let { format } = parsedArgs.options;
+const outputExtension = outputPath?.toLowerCase().match(/\.(png|svg)$/)?.[1];
 
 // --theme=list: print available themes and exit
 if (themeArg === "list") {
+  if (parsedArgs.positionals.length > 0 || Object.keys(parsedArgs.options).length !== 1) {
+    console.error("Error: --theme=list cannot be combined with input, output, or other options");
+    process.exit(1);
+  }
   console.log("Available financial color themes:\n");
   for (const key of THEME_NAMES) {
     const t = resolveTheme(key);
@@ -61,27 +55,69 @@ if (themeArg === "list") {
   process.exit(0);
 }
 
-if (!inputPath || !outputPath) {
+if (parsedArgs.help || !inputPath || !outputPath) {
   console.error("Usage: mermaid-chart.mjs --spec <input.mmd> [-o] <output.png|svg> [--format=png|svg] [--palette=<colors>] [--theme=<name>]");
   console.error("  --palette: comma-separated hex colors (e.g. \"#E63946,#457B9D,#2A9D8F\")");
   console.error("  --theme:   financial preset (fintech, bloomberg, ...) or Mermaid built-in (default, dark, forest, neutral)");
   console.error("             use --theme=list to show all financial themes");
-  process.exit(1);
+  process.exit(parsedArgs.help ? 0 : 1);
 }
 
+if (!outputExtension) {
+  console.error("Error: output file must use a .png or .svg extension");
+  process.exit(1);
+}
 if (!format) {
-  format = outputPath.endsWith(".svg") ? "svg" : "png";
+  format = outputExtension;
+} else {
+  format = format.toLowerCase();
+  if (!new Set(["png", "svg"]).has(format)) {
+    console.error(`Error: unsupported format "${format}". Use png or svg.`);
+    process.exit(1);
+  }
+  if (format !== outputExtension) {
+    console.error(`Error: --format=${format} does not match output extension .${outputExtension}`);
+    process.exit(1);
+  }
 }
 
 const absInput = resolve(inputPath);
 const absOutput = resolve(outputPath);
+const renderOutput = join(dirname(absOutput), `.${basename(absOutput)}.${process.pid}.${Date.now()}.tmp.${format}`);
+if (absInput === absOutput) {
+  console.error("Error: input and output paths must be different");
+  process.exit(1);
+}
+if (!existsSync(absInput)) {
+  console.error(`Error: Mermaid input file not found: ${absInput}`);
+  process.exit(1);
+}
+const inputStat = statSync(absInput);
+if (!inputStat.isFile() || inputStat.size > 10 * 1024 * 1024) {
+  console.error("Error: Mermaid input must be a regular file no larger than 10MB");
+  process.exit(1);
+}
 
-// Find mmdc: walk up from this script to find project root's node_modules/.bin/mmdc
-// Cross-platform: on Windows the shim is mmdc.cmd (npm creates .cmd/.ps1 shims)
+// Prefer the package's JavaScript entry point and invoke it with the current Node
+// executable. This keeps process execution structured on every platform and avoids
+// passing user-controlled paths through cmd.exe or another shell.
+let mmdcCommand;
+let mmdcPrefixArgs = [];
+try {
+  const packageEntry = require.resolve("@mermaid-js/mermaid-cli");
+  const cliEntry = join(dirname(packageEntry), "cli.js");
+  if (existsSync(cliEntry)) {
+    mmdcCommand = process.execPath;
+    mmdcPrefixArgs = [cliEntry];
+  }
+} catch { /* fall through to executable lookup */ }
+
+// Fallback: find a native executable. Windows .cmd/.bat shims are intentionally
+// rejected because they require shell execution; install the package locally instead.
 let mmdcPath;
 let searchDir = __dirname;
-const binNames = IS_WIN ? ["mmdc.cmd", "mmdc"] : ["mmdc"];
-for (let i = 0; i < 10 && !mmdcPath; i++) {
+const binNames = IS_WIN ? ["mmdc.exe", "mmdc"] : ["mmdc"];
+for (let i = 0; i < 10 && !mmdcCommand && !mmdcPath; i++) {
   for (const name of binNames) {
     const candidate = resolve(searchDir, "node_modules", ".bin", name);
     if (existsSync(candidate)) {
@@ -94,20 +130,30 @@ for (let i = 0; i < 10 && !mmdcPath; i++) {
   searchDir = parent;
 }
 
-// Fallback: locate mmdc on PATH (which on POSIX, where on Windows)
-if (!mmdcPath) {
-  try {
-    const out = spawnSync(IS_WIN ? "where" : "which", ["mmdc"], { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
-    if (out.status === 0 && out.stdout) {
-      mmdcPath = out.stdout.split(/\r?\n/)[0].trim();
+// Fallback: scan PATH directly. This avoids launching which/where and keeps
+// executable discovery independent of any shell.
+if (!mmdcCommand && !mmdcPath) {
+  const pathExtensions = IS_WIN
+    ? ["", ...(process.env.PATHEXT || ".EXE;.COM").split(";")]
+      .filter((extension) => !/\.(?:cmd|bat)$/i.test(extension))
+    : [""];
+  const candidates = (process.env.PATH || "").split(IS_WIN ? ";" : ":").filter(Boolean)
+    .flatMap((directory) => pathExtensions.map((extension) => join(directory, `mmdc${extension.toLowerCase()}`)));
+  mmdcPath = candidates.find((candidate) => {
+    try {
+      accessSync(candidate, IS_WIN ? constants.F_OK : constants.X_OK);
+      return true;
+    } catch {
+      return false;
     }
-  } catch { /* ignore */ }
+  });
 }
 
-if (!mmdcPath) {
+if (!mmdcCommand && !mmdcPath) {
   console.error("Error: mmdc not found. Run: cd <hogagent_root> && npm install");
   process.exit(1);
 }
+if (!mmdcCommand) mmdcCommand = mmdcPath;
 
 // Resolve theme: financial preset or Mermaid built-in
 // Default theme: fintech (pass --theme=none to disable)
@@ -116,9 +162,14 @@ const mermaidBuiltinThemes = ["default", "dark", "forest", "neutral"];
 const effectiveTheme = themeArg === "none" ? null : (themeArg || (palette ? null : DEFAULT_THEME));
 const finTheme = resolveTheme(effectiveTheme);
 const mermaidTheme = !finTheme && effectiveTheme && mermaidBuiltinThemes.includes(effectiveTheme) ? effectiveTheme : null;
+if (effectiveTheme && !finTheme && !mermaidTheme) {
+  console.error(`Error: unknown theme "${effectiveTheme}". Use --theme=list to see supported themes.`);
+  process.exit(1);
+}
 
 // Build Mermaid config
 let configFile = null;
+let configDir = null;
 if (finTheme) {
   // Financial theme preset: generate themeVariables
   const vars = toMermaidThemeVars(finTheme);
@@ -135,11 +186,16 @@ if (finTheme) {
       `#flowchart-circle-0 circle, #flowchart-circle-1 circle { fill: ${vars.primaryColor} !important; }`,
     ].join("\n"),
   };
-  configFile = join(tmpdir(), `mermaid-config-${Date.now()}.json`);
+  configDir = mkdtempSync(join(tmpdir(), "tmp-gen-chart-mermaid-"));
+  configFile = join(configDir, "config.json");
   writeFileSync(configFile, JSON.stringify(mermaidConfig, null, 2));
 } else if (palette) {
   // Custom palette
   const colors = palette.split(",").map((c) => c.trim());
+  if (colors.length > 12 || colors.some((color) => !/^#[0-9a-f]{6}$/i.test(color))) {
+    console.error("Error: --palette must contain 1-12 comma-separated six-digit hex colors");
+    process.exit(1);
+  }
   const [primary, secondary, tertiary, note] = [
     colors[0] || "#4C78A8",
     colors[1] || "#F58518",
@@ -159,12 +215,13 @@ if (finTheme) {
       noteTextColor: "#ffffff",
     },
   };
-  configFile = join(tmpdir(), `mermaid-config-${Date.now()}.json`);
+  configDir = mkdtempSync(join(tmpdir(), "tmp-gen-chart-mermaid-"));
+  configFile = join(configDir, "config.json");
   writeFileSync(configFile, JSON.stringify(mermaidConfig, null, 2));
 }
 
 // Build argument list (array form avoids shell quoting pitfalls across platforms)
-const mmdcArgs = ["-i", absInput, "-o", absOutput, "--outputFormat", format, "--backgroundColor", "transparent"];
+const mmdcArgs = ["-i", absInput, "-o", renderOutput, "--outputFormat", format, "--backgroundColor", "transparent"];
 if (configFile) {
   mmdcArgs.push("--configFile", configFile);
 } else if (mermaidTheme) {
@@ -172,20 +229,22 @@ if (configFile) {
 }
 
 try {
-  // shell:true lets Windows run the .cmd shim; args stay an array so no manual quoting is needed
-  const result = spawnSync(mmdcPath, mmdcArgs, { stdio: "pipe", shell: IS_WIN });
+  const result = spawnSync(mmdcCommand, [...mmdcPrefixArgs, ...mmdcArgs], { stdio: "pipe", shell: false, timeout: 120_000 });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     const stderr = result.stderr ? result.stderr.toString() : "";
     throw new Error(stderr || `mmdc exited with code ${result.status}`);
   }
+  if (!existsSync(renderOutput)) throw new Error("mmdc exited successfully but did not create the output file");
+  const outputStat = statSync(renderOutput);
+  if (!outputStat.isFile() || outputStat.size === 0) throw new Error("mmdc created an empty or invalid output file");
+  renameSync(renderOutput, absOutput);
   const info = finTheme ? ` (theme: ${finTheme.name})` : "";
   console.log(`Diagram generated: ${outputPath}${info}`);
 } catch (err) {
   console.error(`Mermaid CLI error: ${err.message}`);
   process.exit(1);
 } finally {
-  if (configFile && existsSync(configFile)) {
-    try { unlinkSync(configFile); } catch { /* ignore */ }
-  }
+  try { unlinkSync(renderOutput); } catch { /* already renamed or never created */ }
+  if (configDir) rmSync(configDir, { recursive: true, force: true });
 }

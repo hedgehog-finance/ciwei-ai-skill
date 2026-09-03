@@ -5,7 +5,7 @@ description: >
   capital flow, financial statements, ratios, audit opinions, main business composition; domestic index
   profiles/daily metrics/constituent weights, global index daily quotes; Shenwan industry data and trading calendar utilities.
   NOT for: macro data (→ hedgehog-macro-industry-data); news/announcements.
-version: 1.11.0
+version: 1.11.2
 metadata:
   {
     "openclaw": {
@@ -17,9 +17,20 @@ metadata:
 # 上市公司与指数数据查询
 
 
-## Windows command compatibility
+## Portable CLI parameters
 
-On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+When a documented CLI accepts a parameter object, use the same rule on every Agent and operating system; existing positional file inputs remain positional:
+
+1. When every business value is a non-empty, single-line `string | finite number | boolean`, pass it as a named argument (`--key value` or `--key=value`). Names are case-sensitive and are not normalized.
+2. When any value is an object, array, `null`, multiline text, a numeric/boolean-looking string that must remain a string, or contains difficult quoting, write the complete parameter object as UTF-8 JSON and pass the file option documented by this Skill.
+3. Agent-created parameter files must have a unique basename matching `tmp-<skill-name>-<unique-id>.json`, must not use the reserved `.hedgehog/` directory, and must be removed after the call when no longer needed. UTF-8 BOM is accepted.
+4. Do not inline nested JSON or combine flat arguments with a JSON/file payload. Create JSON with the Agent's file-writing capability, not `echo`, a shell heredoc, or PowerShell string assembly.
+
+POSIX/Git Bash form: `node '<script>' --key 'single-line value'` or `node '<script>' <file-option> '<workspace>/tmp-<skill-name>-<id>.json'`.
+
+PowerShell form: `node "<script>" --key "single-line value"` or `node "<script>" <file-option> "<workspace>\\tmp-<skill-name>-<id>.json"`.
+
+On Windows, use PowerShell or a verified Git for Windows Bash; `cmd.exe` is unsupported. Keep each command on one physical line. The process runs with the current Agent user's permissions and that Agent's native sandbox; HogAgent marks its Windows shell as `UNSANDBOXED`.
 
 ## 工作流
 
@@ -50,11 +61,11 @@ On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Kee
 统一使用：
 
 ```bash
-node scripts/call_api.js --api <接口名> --params '<JSON字符串>' --dir <sessionTaskDir>
-node scripts/call_api.js --api <接口名> --params-file <params.json> --dir <sessionTaskDir>
+node scripts/call_api.js --api getStockBasic --stock_name '贵州茅台'
+node scripts/call_api.js --api <接口名> --params-file '<sessionTaskDir>/tmp-hedgehog-company-index-data-<id>.json' --dir '<sessionTaskDir>'
 ```
 
-简单参数使用 `--params`；长、深层嵌套、自动生成或引号较多的 UTF-8 JSON 使用 `--params-file`。两者不能同时使用。
+业务参数全部为安全顶层标量时，Agent 直接使用命名参数；出现对象、数组、`null`、多行文本或复杂引号时，才写入唯一的 `tmp-*.json` 并使用 `--params-file`。不得内联嵌套 JSON 或混用载荷入口；`--params` 仅为兼容入口。
 
 - `--dir <sessionTaskDir>` 始终必传；若系统和用户均未指定，使用当前 workspace。
 - `--out <文件名>` 可选，指定相对 `--dir` 或绝对输出路径；省略时使用 `data-<datetime>-<N>.json`。
@@ -106,3 +117,7 @@ node scripts/call_api.js --api <接口名> --params-file <params.json> --dir <se
 | HTTP 5xx | 提示服务端错误，建议稍后重试 |
 | 连接失败 | 提示检查 API 可达性 |
 | 参数校验失败 | 不发送请求；按匹配的主参考修正参数 |
+
+## 执行安全边界
+
+参数文件最大 10 MiB，请求 URL 最大 65,536 字符，请求体最大 10 MiB，响应最大 20 MiB，网络请求 30 秒超时。配置损坏、参数冲突、非法响应和超限数据均明确失败；落盘结果先写同目录临时文件，成功后再原子替换目标。

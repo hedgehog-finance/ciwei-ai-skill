@@ -1,6 +1,6 @@
 ---
 name: math_calc
-version: 1.1.0
+version: 1.1.2
 description: >
     Safe mathematical expression evaluator. Supports arithmetic, exponents,
     parentheses, trigonometry, logarithms, factorial, conditionals, and constants
@@ -14,9 +14,20 @@ prerequisites:
 # Math Calculator
 
 
-## Windows command compatibility
+## Portable CLI parameters
 
-On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+When a documented CLI accepts a parameter object, use the same rule on every Agent and operating system; existing positional file inputs remain positional:
+
+1. When every business value is a non-empty, single-line `string | finite number | boolean`, pass it as a named argument (`--key value` or `--key=value`). Names are case-sensitive and are not normalized.
+2. When any value is an object, array, `null`, multiline text, a numeric/boolean-looking string that must remain a string, or contains difficult quoting, write the complete parameter object as UTF-8 JSON and pass the file option documented by this Skill.
+3. Agent-created parameter files must have a unique basename matching `tmp-<skill-name>-<unique-id>.json`, must not use the reserved `.hedgehog/` directory, and must be removed after the call when no longer needed. UTF-8 BOM is accepted.
+4. Do not inline nested JSON or combine flat arguments with a JSON/file payload. Create JSON with the Agent's file-writing capability, not `echo`, a shell heredoc, or PowerShell string assembly.
+
+POSIX/Git Bash form: `node '<script>' --key 'single-line value'` or `node '<script>' <file-option> '<workspace>/tmp-<skill-name>-<id>.json'`.
+
+PowerShell form: `node "<script>" --key "single-line value"` or `node "<script>" <file-option> "<workspace>\\tmp-<skill-name>-<id>.json"`.
+
+On Windows, use PowerShell or a verified Git for Windows Bash; `cmd.exe` is unsupported. Keep each command on one physical line. The process runs with the current Agent user's permissions and that Agent's native sandbox; HogAgent marks its Windows shell as `UNSANDBOXED`.
 
 A safe mathematical expression evaluator built on the expr-eval parser. Supports arithmetic operations, trigonometric functions, logarithms, factorials, conditional expressions, and more.
 
@@ -135,3 +146,4 @@ node ${HERMES_SKILL_DIR}/cli.mjs "5 > 3 ? 100 : 200"
 - Returns an error message when the expression is empty or invalid.
 - Returns an error when the result is non-finite (overflow or invalid operation).
 - Variable assignment or custom variables are not supported (only built-in constants pi and e).
+- Help mode is exclusive; the CLI performs no network or subprocess calls and rejects extra options or positional values.

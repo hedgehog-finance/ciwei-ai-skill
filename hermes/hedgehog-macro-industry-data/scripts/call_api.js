@@ -7,6 +7,18 @@ const fs = require('fs');
 const path = require('path');
 
 const BASE_URL = process.env.API_BASE_URL || 'https://api.ciweiai.com/api/data';
+const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
+
+function selectApiKey(candidates) {
+  for (const [value, source] of candidates) {
+    if (value === undefined || value === null || value === '') continue;
+    if (typeof value !== 'string' || value.length > 8192 || /[\0\r\n]/.test(value)) {
+      throw new Error(`${source} must be a single-line string no longer than 8192 characters`);
+    }
+    if (value.trim()) return value.trim();
+  }
+  return '';
+}
 
 /**
  * 加载 API Key（按优先级）：
@@ -14,7 +26,10 @@ const BASE_URL = process.env.API_BASE_URL || 'https://api.ciweiai.com/api/data';
  * 2. 环境变量 API_KEY（非 Hermes 环境的通用兜底）
  */
 function loadApiKey() {
-  return process.env.CIWEIAI_API_KEY || process.env.API_KEY || '';
+  return selectApiKey([
+    [process.env.CIWEIAI_API_KEY, 'CIWEIAI_API_KEY'],
+    [process.env.API_KEY, 'API_KEY'],
+  ]);
 }
 
 const API_KEY = loadApiKey();
@@ -118,46 +133,86 @@ const API_ROUTES = {
   },
 };
 
-function parseArgs(argv) {
-  const args = {};
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (!arg.startsWith('--')) continue;
-    const key = arg.slice(2);
-    const next = argv[i + 1];
-    if (!next || next.startsWith('--')) {
-      args[key] = true;
-    } else {
-      args[key] = next;
-      i += 1;
-    }
+const CONTROL_PARAMETER_NAMES = new Set(['api', 'params', 'params-file', 'dir', 'out', 'output']);
+const NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
+function parseScalar(raw, name) {
+  if (raw.trim() === '') throw new Error(`--${name} 需要非空参数值`);
+  if (/\r|\n/.test(raw)) throw new Error(`--${name} 包含多行文本，请改用 --params-file <tmp-*.json>`);
+  if (raw === 'null' || /^[\[{]/.test(raw.trim())) {
+    throw new Error(`--${name} 不是扁平标量，请改用 --params-file <tmp-*.json>`);
   }
-  return args;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  if (NUMBER_PATTERN.test(raw)) {
+    const number = Number(raw);
+    if (Number.isFinite(number)) return number;
+  }
+  return raw;
 }
 
-function readJsonParams(args) {
-  if (args.params === true) throw new Error('--params 需要 JSON 值');
-  if (args['params-file'] === true) throw new Error('--params-file 需要文件路径');
-  if (args.params !== undefined && args['params-file'] !== undefined) {
-    throw new Error('--params 与 --params-file 不能同时使用');
+function parseArgs(argv) {
+  const controls = {};
+  const flatParams = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (!arg.startsWith('--')) throw new Error(`不支持的位置参数: ${arg}`);
+
+    const equalAt = arg.indexOf('=');
+    const key = arg.slice(2, equalAt === -1 ? undefined : equalAt);
+    if (!key) throw new Error(`无效参数名: ${arg}`);
+    const raw = equalAt === -1 ? argv[i + 1] : arg.slice(equalAt + 1);
+    if (equalAt === -1) {
+      if (raw === undefined || raw.startsWith('--')) throw new Error(`--${key} 需要参数值`);
+      i += 1;
+    }
+
+    if (raw.trim() === '') throw new Error(`--${key} 需要非空参数值`);
+    const target = CONTROL_PARAMETER_NAMES.has(key) ? controls : flatParams;
+    if (Object.prototype.hasOwnProperty.call(target, key)) throw new Error(`参数重复: --${key}`);
+    target[key] = CONTROL_PARAMETER_NAMES.has(key) ? raw : parseScalar(raw, key);
   }
-  if (args.params === undefined && args['params-file'] === undefined) return {};
+  return { controls, flatParams };
+}
+
+function parseJsonObject(raw, source) {
+  let value;
+  try {
+    value = JSON.parse(raw.replace(/^\uFEFF/, ''));
+  } catch (error) {
+    const advice = source === '--params'
+      ? '；请改用扁平业务参数，或将 UTF-8 JSON 写入 tmp-*.json 后使用 --params-file'
+      : '';
+    throw new Error(`${source} 不是合法 JSON: ${error.message}${advice}`);
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${source} 必须包含 JSON 对象`);
+  }
+  return value;
+}
+
+function readJsonParams(args, flatParams) {
+  const sourceCount = [
+    Object.keys(flatParams).length > 0,
+    args.params !== undefined,
+    args['params-file'] !== undefined,
+  ].filter(Boolean).length;
+  if (sourceCount > 1) throw new Error('扁平业务参数、--params-file 与 --params 不能混用');
+  if (args.params === undefined && args['params-file'] === undefined) return flatParams;
 
   let raw = args.params;
   let source = '--params';
   if (args['params-file'] !== undefined) {
     source = `--params-file ${args['params-file']}`;
     try {
+      const fileStat = fs.statSync(args['params-file']);
+      if (!fileStat.isFile() || fileStat.size > 10 * 1024 * 1024) throw new Error('参数文件必须是小于 10MB 的普通文件');
       raw = fs.readFileSync(args['params-file'], 'utf8');
     } catch (error) {
       throw new Error(`无法读取 ${source}: ${error.message}`);
     }
   }
-  try {
-    return JSON.parse(raw.replace(/^\uFEFF/, ""));
-  } catch (error) {
-    throw new Error(`${source} 不是合法 JSON: ${error.message}`);
-  }
+  return parseJsonObject(raw, source);
 }
 
 function buildUrl(routePath, params) {
@@ -171,7 +226,11 @@ function buildUrl(routePath, params) {
   });
 
   const base = BASE_URL.replace(/\/+$/, '');
-  return new URL(`${base}${path}`);
+  const url = new URL(`${base}${path}`);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new Error('API_BASE_URL 必须是无内嵌凭证的 HTTP 或 HTTPS URL');
+  }
+  return url;
 }
 
 function appendQuery(url, params) {
@@ -179,7 +238,7 @@ function appendQuery(url, params) {
     if (value === undefined || value === null) continue;
     if (Array.isArray(value)) {
       for (const item of value) {
-        url.searchParams.append(key, String(item));
+        url.searchParams.append(key, item !== null && typeof item === 'object' ? JSON.stringify(item) : String(item));
       }
     } else if (typeof value === 'object') {
       url.searchParams.set(key, JSON.stringify(value));
@@ -395,11 +454,16 @@ async function callApi(apiName, params = {}) {
   } else {
     body = JSON.stringify(requestParams);
   }
+  if (url.toString().length > 65_536) throw new Error('请求 URL 超过 65536 字符上限');
+  if (body !== null && Buffer.byteLength(body) > 10 * 1024 * 1024) throw new Error('请求体超过 10MB 上限');
 
   const headers = {
     'Accept': 'application/json',
   };
   if (API_KEY) {
+    if (typeof API_KEY !== 'string' || /[\r\n]/.test(API_KEY) || API_KEY.length > 10000) {
+      throw new Error('API Key 必须是长度不超过 10000 的单行字符串');
+    }
     headers['Authorization'] = `Bearer ${API_KEY}`;
   }
   if (body !== null) {
@@ -417,7 +481,20 @@ async function callApi(apiName, params = {}) {
     const req = transport.request(url, options, (res) => {
       const chunks = [];
 
-      res.on('data', (chunk) => chunks.push(chunk));
+      let received = 0;
+      const declaredLength = Number(res.headers['content-length']);
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+        req.destroy(new Error(`响应超过 ${MAX_RESPONSE_BYTES} 字节上限`));
+        return;
+      }
+      res.on('data', (chunk) => {
+        received += chunk.length;
+        if (received > MAX_RESPONSE_BYTES) {
+          req.destroy(new Error(`响应超过 ${MAX_RESPONSE_BYTES} 字节上限`));
+          return;
+        }
+        chunks.push(chunk);
+      });
       res.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf8');
         const contentType = res.headers['content-type'] || '';
@@ -426,12 +503,12 @@ async function callApi(apiName, params = {}) {
         try {
           parsed = parseBody(raw, contentType);
         } catch (err) {
-          reject(new Error(`响应 JSON 解析失败: ${err.message}. 原始响应: ${raw}`));
+          reject(new Error(`响应 JSON 解析失败: ${err.message}. 原始响应片段: ${raw.slice(0, 500)}`));
           return;
         }
 
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          const bodyText = typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
+          const bodyText = (typeof parsed === 'string' ? parsed : JSON.stringify(parsed)).slice(0, 500);
           reject(new Error(`HTTP ${res.statusCode}: ${bodyText}`));
           return;
         }
@@ -441,6 +518,7 @@ async function callApi(apiName, params = {}) {
     });
 
     req.on('error', (err) => reject(new Error(`请求失败: ${err.message}`)));
+    req.setTimeout(30_000, () => req.destroy(new Error('请求超时（30 秒）')));
 
     if (body !== null) req.write(body);
     req.end();
@@ -453,17 +531,28 @@ async function callApi(apiName, params = {}) {
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv.length === 1 && ['-h', '--help'].includes(argv[0])) {
+    console.log(`Usage: node call_api.js --api <接口名> [--key value ... | --params-file <tmp-*.json>]\n接口: ${Object.keys(API_ROUTES).join(', ')}`);
+    return;
+  }
+  const { controls: args, flatParams } = parseArgs(argv);
   if (!args.api) {
     throw new Error('缺少参数: --api <接口名>');
   }
 
-  const params = readJsonParams(args);
+  const params = readJsonParams(args, flatParams);
 
   const route = API_ROUTES[args.api];
+  if (args.output !== undefined && args.output !== 'save') {
+    throw new Error('--output 仅支持 save');
+  }
   // 落盘策略由路由配置 saveOutput 硬编码决定，--output save 可强制覆盖
   const shouldSave = args.output === 'save' || (route && route.saveOutput === true);
 
+  if (args.out !== undefined && !shouldSave) {
+    throw new Error('--out 仅可用于落盘接口或与 --output save 一起使用');
+  }
   if (shouldSave && !args.dir) {
     throw new Error('缺少参数: --dir <输出目录>（落盘接口必须指定输出目录）');
   }
@@ -491,7 +580,13 @@ async function main() {
     }
 
     const jsonStr = JSON.stringify(result, null, 2);
-    fs.writeFileSync(filepath, jsonStr, 'utf-8');
+    const tempPath = path.join(path.dirname(filepath), `.${path.basename(filepath)}.${process.pid}.${Date.now()}.tmp`);
+    try {
+      fs.writeFileSync(tempPath, jsonStr, { encoding: 'utf-8', flag: 'wx' });
+      fs.renameSync(tempPath, filepath);
+    } finally {
+      try { fs.unlinkSync(tempPath); } catch (_) { /* already renamed or never created */ }
+    }
 
     // Print summary to stdout. A null/empty result means the query succeeded
     // but matched no data — report 0 records instead of crashing on Object.keys(null).
@@ -520,4 +615,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { API_ROUTES, callApi };
+module.exports = { API_ROUTES, callApi, parseArgs, readJsonParams };

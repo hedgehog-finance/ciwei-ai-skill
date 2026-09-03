@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import argparse
 from io import BytesIO
+import math
+import os
 from pathlib import Path
 import re
 from statistics import median
 import sys
+import tempfile
 from typing import Tuple
 
 
@@ -20,6 +23,9 @@ Color = Tuple[int, int, int]
 KEY_DOMINANCE_THRESHOLD = 16.0
 ALPHA_NOISE_FLOOR = 8
 DEFAULT_RUNTIME_HOME = "~/.gen-rich-ppt"
+MAX_IMAGE_BYTES = 50 * 1024 * 1024
+MAX_IMAGE_DIMENSION = 32768
+MAX_IMAGE_PIXELS = 25_000_000
 
 
 def _die(message: str, code: int = 1) -> None:
@@ -36,7 +42,7 @@ def _dependency_hint(package: str) -> str:
     skill_root = Path(__file__).resolve().parents[1]
     return (
         "Install gen-rich-ppt dependencies in the shared runtime first, for example "
-        f"`python3 {skill_root / 'scripts' / 'gen_rich_ppt_runtime.py'} bootstrap`, "
+        f"`{sys.executable} {skill_root / 'scripts' / 'gen_rich_ppt_runtime.py'} bootstrap`, "
         f"or install {package} directly with `{python} -m pip install {package}`."
     )
 
@@ -63,6 +69,13 @@ def _parse_key_color(raw: str) -> Color:
 
 
 def _validate_args(args: argparse.Namespace) -> None:
+    for option, value in (
+        ("--transparent-threshold", args.transparent_threshold),
+        ("--opaque-threshold", args.opaque_threshold),
+        ("--edge-feather", args.edge_feather),
+    ):
+        if not math.isfinite(value):
+            _die(f"{option} must be a finite number.")
     if args.tolerance < 0 or args.tolerance > 255:
         _die("--tolerance must be between 0 and 255.")
     if args.transparent_threshold < 0 or args.transparent_threshold > 255:
@@ -77,10 +90,14 @@ def _validate_args(args: argparse.Namespace) -> None:
         _die("--edge-contract must be between 0 and 16.")
 
     src = Path(args.input)
-    if not src.exists():
-        _die(f"Input image not found: {src}")
+    if not src.exists() or not src.is_file():
+        _die(f"Input must be a regular image file: {src}")
+    if src.stat().st_size > MAX_IMAGE_BYTES:
+        _die(f"Input image exceeds the 50MB limit: {src}")
 
     out = Path(args.out)
+    if src.resolve() == out.resolve():
+        _die("Input and output paths must be different.")
     if out.exists() and not args.force:
         _die(f"Output already exists: {out} (use --force to overwrite)")
 
@@ -334,6 +351,17 @@ def _remove_chroma_key(args: argparse.Namespace) -> None:
     out = Path(args.out)
 
     with Image.open(src) as image:
+        if (
+            image.width < 1
+            or image.height < 1
+            or image.width > MAX_IMAGE_DIMENSION
+            or image.height > MAX_IMAGE_DIMENSION
+            or image.width * image.height > MAX_IMAGE_PIXELS
+        ):
+            _die(
+                f"Input image dimensions must be between 1 and {MAX_IMAGE_DIMENSION} pixels per edge "
+                f"and no more than {MAX_IMAGE_PIXELS} total pixels."
+            )
         rgba = image.convert("RGBA")
     key = (
         _sample_border_key(rgba, args.auto_key)
@@ -357,7 +385,17 @@ def _remove_chroma_key(args: argparse.Namespace) -> None:
 
     out.parent.mkdir(parents=True, exist_ok=True)
     output_format = "PNG" if out.suffix.lower() == ".png" else "WEBP"
-    out.write_bytes(_encode_image(rgba, output_format))
+    encoded = _encode_image(rgba, output_format)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{out.name}.", suffix=".tmp", dir=out.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, out)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
 
     print(f"Wrote {out}")
     print(f"Key color: #{key[0]:02x}{key[1]:02x}{key[2]:02x}")

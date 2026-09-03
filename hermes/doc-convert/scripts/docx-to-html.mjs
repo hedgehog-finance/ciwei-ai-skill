@@ -21,6 +21,10 @@ if (ext !== ".docx") {
   log("error", `Unsupported file type "${ext}". Supported: .docx`);
   process.exit(1);
 }
+if (![".html", ".htm"].includes(extname(outputPath).toLowerCase())) {
+  log("error", "Output file must use a .html or .htm extension");
+  process.exit(1);
+}
 
 log("info", `Converting DOCX to HTML: ${inputPath}`);
 

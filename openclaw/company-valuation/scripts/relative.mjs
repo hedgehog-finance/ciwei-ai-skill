@@ -17,8 +17,7 @@
  *   - ev-fcf        : 企业价值/自由现金流
  *
  * Usage:
- *   node ./scripts/relative.mjs <method> '<params-json>'
- *   node ./scripts/relative.mjs <method> --params-file <params.json>
+ *   node ./scripts/relative.mjs <method> [--key value ... | --params-file <tmp-*.json>]
  */
 
 import { fileURLToPath } from 'node:url';
@@ -33,6 +32,43 @@ function round(v, d = 2) {
 
 function pct(v, d = 2) {
   return `${(v * 100).toFixed(d)}%`;
+}
+
+function assertFiniteOutput(value, path = 'result') {
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new Error(`${path} is not finite; check zero denominators and parameter ranges`);
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertFiniteOutput(item, `${path}[${index}]`));
+  } else if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      assertFiniteOutput(item, `${path}.${key}`);
+    }
+  }
+}
+
+function finiteNumber(value, name) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${name} 必须是有限数字`);
+  }
+  return value;
+}
+
+const NUMERIC_PARAMETERS = new Set([
+  'marketCap', 'netIncome', 'price', 'eps', 'totalShare', 'pe', 'industryPE',
+  'peLowFactor', 'peHighFactor', 'currentPrice', 'ttmNetProfit', 'equityToParent',
+  'industryPB', 'pbLowFactor', 'pbHighFactor', 'revenue', 'ttmRevenue', 'industryPS',
+  'peerPS', 'psLowFactor', 'psHighFactor', 'totalDebt', 'cash', 'ebitda',
+  'earningsGrowthRate', 'targetPEG', 'arr', 'industryARRMultiple', 'arrLowFactor',
+  'arrHighFactor', 'activeUsers', 'industryValuePerUser', 'userLowFactor',
+  'userHighFactor', 'gmv', 'industryPGmv', 'gmvLowFactor', 'gmvHighFactor',
+  'freeCashFlow', 'industryEvFcf', 'fcfLowFactor', 'fcfHighFactor',
+]);
+
+function validateNumericParameters(params) {
+  for (const name of NUMERIC_PARAMETERS) {
+    if (params[name] !== undefined) finiteNumber(params[name], `${name}（必须使用 JSON number，不能使用数字字符串）`);
+  }
 }
 
 /** 计算折溢价范围 */
@@ -72,16 +108,29 @@ function calcTTM(reports, field) {
   if (!Array.isArray(reports) || reports.length === 0) {
     throw new Error('reports 数组不能为空');
   }
+  if (reports.length > 10000) throw new Error('reports 最多支持 10000 条记录');
+  if (typeof field !== 'string' || field.length === 0 || field.length > 128) {
+    throw new Error('reportField 必须是长度为 1 到 128 的字符串');
+  }
+  const normalized = reports.map((report, index) => {
+    if (!report || typeof report !== 'object' || Array.isArray(report)) {
+      throw new Error(`reports[${index}] 必须是对象`);
+    }
+    const endDate = String(report.end_date ?? '');
+    if (!/^\d{8}$/.test(endDate)) throw new Error(`reports[${index}].end_date 必须是 YYYYMMDD 格式`);
+    return { report, endDate };
+  });
   // 按 end_date 降序排序
-  const sorted = [...reports].sort((a, b) => b.end_date.localeCompare(a.end_date));
-  const latest = sorted[0];
-  const endDate = String(latest.end_date);
+  const sorted = normalized.sort((a, b) => b.endDate.localeCompare(a.endDate));
+  const latest = sorted[0].report;
+  const endDate = sorted[0].endDate;
   const monthDay = endDate.slice(4, 8);
 
   const latestValue = latest[field];
   if (latestValue === undefined || latestValue === null) {
     throw new Error(`报告期 ${endDate} 缺少字段: ${field}`);
   }
+  finiteNumber(latestValue, `报告期 ${endDate} 的 ${field}`);
 
   // 年报：直接返回
   if (monthDay === '1231') {
@@ -91,7 +140,7 @@ function calcTTM(reports, field) {
   // 找去年年报
   const lastYear = endDate.slice(0, 4);
   const lastYearEndDate = `${Number(lastYear) - 1}1231`;
-  const lastYearReport = sorted.find((r) => String(r.end_date) === lastYearEndDate);
+  const lastYearReport = sorted.find((entry) => entry.endDate === lastYearEndDate)?.report;
 
   if (!lastYearReport) {
     throw new Error(`无法找到去年年报 (${lastYearEndDate})，请确保 reports 包含去年同期数据`);
@@ -101,10 +150,11 @@ function calcTTM(reports, field) {
   if (lastYearValue === undefined || lastYearValue === null) {
     throw new Error(`去年年报 (${lastYearEndDate}) 缺少字段: ${field}`);
   }
+  finiteNumber(lastYearValue, `去年年报 (${lastYearEndDate}) 的 ${field}`);
 
   // 找去年同期的报告
   const lastYearSamePeriod = `${Number(lastYear) - 1}${monthDay}`;
-  const lastYearSameReport = sorted.find((r) => String(r.end_date) === lastYearSamePeriod);
+  const lastYearSameReport = sorted.find((entry) => entry.endDate === lastYearSamePeriod)?.report;
 
   if (!lastYearSameReport) {
     throw new Error(`无法找到去年同期报告 (${lastYearSamePeriod})，请确保 reports 包含去年同期数据`);
@@ -114,6 +164,7 @@ function calcTTM(reports, field) {
   if (lastYearSameValue === undefined || lastYearSameValue === null) {
     throw new Error(`去年同期报告 (${lastYearSamePeriod}) 缺少字段: ${field}`);
   }
+  finiteNumber(lastYearSameValue, `去年同期报告 (${lastYearSamePeriod}) 的 ${field}`);
 
   // TTM = 本期 + 去年年报 - 去年同期
   return latestValue + lastYearValue - lastYearSameValue;
@@ -598,8 +649,8 @@ function main() {
 
   if (argv.length < 1 || argv[0] === '--help' || argv[0] === '-h') {
     const help = VALID_METHODS.map((m) => `  ${m.padEnd(20)} ${METHODS[m].desc}`).join('\n');
-    console.log(`用法: node relative.mjs <method> '<params-json>'\n      node relative.mjs <method> --params-file <params.json>\n\n支持方法:\n${help}`);
-    process.exit(0);
+    console.log(`用法: node relative.mjs <method> [--key value ... | --params-file <tmp-*.json>]\n      人工兼容: node relative.mjs <method> '<params-json>'\n\n支持方法:\n${help}`);
+    return;
   }
 
   const method = argv[0].toLowerCase();
@@ -609,13 +660,25 @@ function main() {
   }
 
   const params = readJsonParams(argv.slice(1));
+  validateNumericParameters(params);
+
+  const missing = def.required.filter((key) => params[key] === undefined);
+  if (missing.length > 0) {
+    throw new Error(`方法 '${method}' 缺少必填参数: ${missing.join(', ')}`);
+  }
 
   const result = def.exec(params);
+  assertFiniteOutput(result);
   console.log(JSON.stringify({ method, ...result }, null, 2));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main();
+  try {
+    main();
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+    process.exitCode = 1;
+  }
 }
 
 export { METHODS, VALID_METHODS, calcTTM };

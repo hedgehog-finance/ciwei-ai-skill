@@ -1,7 +1,7 @@
 {
   "name": "hedgehog-macro-industry-data",
   "license": "GPL-3.0",
-  "version": "1.8.0",
+  "version": "1.8.2",
   "private": true,
   "type": "commonjs",
   "description": "Query China-US macro data: Shibor, LPR, CPI, PPI, PMI, M0/M1/M2, social financing, US Treasury yields.",

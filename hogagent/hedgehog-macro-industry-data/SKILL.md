@@ -5,15 +5,26 @@ description: >
   US: Treasury yields.
   NOT for: stock quotes/fundamentals/financials (→ hedgehog-company-index-data); news/announcements.
   Triggers: macro data, interest rate, CPI, PPI, PMI, M1, M2, social financing, money supply, US Treasury yield.
-version: 1.8.0
+version: 1.8.2
 ---
 
 # 宏观经济数据查询
 
 
-## Windows command compatibility
+## Portable CLI parameters
 
-On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+When a documented CLI accepts a parameter object, use the same rule on every Agent and operating system; existing positional file inputs remain positional:
+
+1. When every business value is a non-empty, single-line `string | finite number | boolean`, pass it as a named argument (`--key value` or `--key=value`). Names are case-sensitive and are not normalized.
+2. When any value is an object, array, `null`, multiline text, a numeric/boolean-looking string that must remain a string, or contains difficult quoting, write the complete parameter object as UTF-8 JSON and pass the file option documented by this Skill.
+3. Agent-created parameter files must have a unique basename matching `tmp-<skill-name>-<unique-id>.json`, must not use the reserved `.hedgehog/` directory, and must be removed after the call when no longer needed. UTF-8 BOM is accepted.
+4. Do not inline nested JSON or combine flat arguments with a JSON/file payload. Create JSON with the Agent's file-writing capability, not `echo`, a shell heredoc, or PowerShell string assembly.
+
+POSIX/Git Bash form: `node '<script>' --key 'single-line value'` or `node '<script>' <file-option> '<workspace>/tmp-<skill-name>-<id>.json'`.
+
+PowerShell form: `node "<script>" --key "single-line value"` or `node "<script>" <file-option> "<workspace>\\tmp-<skill-name>-<id>.json"`.
+
+On Windows, use PowerShell or a verified Git for Windows Bash; `cmd.exe` is unsupported. Keep each command on one physical line. The process runs with the current Agent user's permissions and that Agent's native sandbox; HogAgent marks its Windows shell as `UNSANDBOXED`.
 
 ## 1. 核心调度与全局约定
 
@@ -43,11 +54,11 @@ export CIWEIAI_API_KEY="your-api-key-here"
 
 **统一执行脚本**：
 ```bash
-node scripts/call_api.js --api <接口名> --params '<JSON字符串>' --dir <sessionTaskDir>[ --out <文件名>]
-node scripts/call_api.js --api <接口名> --params-file <params.json> --dir <sessionTaskDir>[ --out <文件名>]
+node scripts/call_api.js --api queryShibor --start_date 2024-05-01 --end_date 2024-05-31 --dir '<sessionTaskDir>'
+node scripts/call_api.js --api <接口名> --params-file '<sessionTaskDir>/tmp-hedgehog-macro-industry-data-<id>.json' --dir '<sessionTaskDir>' [--out <文件名>]
 ```
 
-简单参数使用 `--params`；长、深层嵌套、自动生成或引号较多的 UTF-8 JSON 使用 `--params-file`。两者不能同时使用。
+业务参数全部为安全顶层标量时，Agent 直接使用命名参数；出现对象、数组、`null`、多行文本或复杂引号时，才写入唯一的 `tmp-*.json` 并使用 `--params-file`。不得内联嵌套 JSON 或混用载荷入口；`--params` 仅为兼容入口。
 
 **输出策略（脚本自动决定）**：
 - 本 skill 所有接口均返回时间序列数据，脚本自动保存为 `data-*.json`，stdout 仅输出文件指针
@@ -80,7 +91,7 @@ node scripts/call_api.js --api <接口名> --params-file <params.json> --dir <se
 ### Tool-1: 中国 Shibor 利率 (`queryShibor`)
 **适用**：Shibor、银行间同业拆借利率。**排雷**：LPR贷款利率 → Tool-2。
 
-**典型调用**：查询最近30天 Shibor `node scripts/call_api.js --api queryShibor --params '{"start_date":"2024-05-01","end_date":"2024-05-31"}' --dir <sessionTaskDir>`
+**典型调用**：先将 `{"start_date":"2024-05-01","end_date":"2024-05-31"}` 写入 `<sessionTaskDir>/tmp-hedgehog-macro-industry-data-<id>.json`，再执行 `node scripts/call_api.js --api queryShibor --params-file '<sessionTaskDir>/tmp-hedgehog-macro-industry-data-<id>.json' --dir '<sessionTaskDir>'`
 
 **输入参数**：
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
@@ -308,3 +319,7 @@ node scripts/call_api.js --api <接口名> --params-file <params.json> --dir <se
 | 宏观指标（利率 / 物价 / 社融等） | **本 skill** (`hedgehog-macro-industry-data`) |
 | 单只股票行情 / 基本面 / 财报 | `hedgehog-company-index-data` |
 | 市场新闻资讯 / 公司公告 / 研报 | `hedgehog-news-reports` |
+
+## 执行安全边界
+
+参数文件最大 10 MiB，请求 URL 最大 65,536 字符，请求体最大 10 MiB，响应最大 20 MiB，网络请求 30 秒超时。配置损坏、参数冲突、非法响应和超限数据均明确失败；落盘结果先写同目录临时文件，成功后再原子替换目标。

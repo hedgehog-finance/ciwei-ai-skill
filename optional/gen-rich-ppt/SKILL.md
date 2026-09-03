@@ -1,6 +1,6 @@
 ---
 name: gen-rich-ppt
-version: 1.1.0
+version: 1.1.2
 description: >
   Generate polished, visually unified, image-based PowerPoint/PPTX decks from articles,
   reports, papers, notes, outlines, or ideas. Use when the user wants a rich visual
@@ -13,9 +13,20 @@ description: >
 # Gen Rich PPT
 
 
-## Windows command compatibility
+## Portable CLI parameters
 
-On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+When a documented CLI accepts a parameter object, use the same rule on every Agent and operating system; existing positional file inputs remain positional:
+
+1. When every business value is a non-empty, single-line `string | finite number | boolean`, pass it as a named argument (`--key value` or `--key=value`). Names are case-sensitive and are not normalized.
+2. When any value is an object, array, `null`, multiline text, a numeric/boolean-looking string that must remain a string, or contains difficult quoting, write the complete parameter object as UTF-8 JSON and pass the file option documented by this Skill.
+3. Agent-created parameter files must have a unique basename matching `tmp-<skill-name>-<unique-id>.json`, must not use the reserved `.hedgehog/` directory, and must be removed after the call when no longer needed. UTF-8 BOM is accepted.
+4. Do not inline nested JSON or combine flat arguments with a JSON/file payload. Create JSON with the Agent's file-writing capability, not `echo`, a shell heredoc, or PowerShell string assembly.
+
+POSIX/Git Bash form: `python3 '<script>' --key 'single-line value'` or `python3 '<script>' <file-option> '<workspace>/tmp-<skill-name>-<id>.json'`.
+
+PowerShell form: `python "<script>" --key "single-line value"` or `python "<script>" <file-option> "<workspace>\\tmp-<skill-name>-<id>.json"`.
+
+On Windows, use PowerShell or a verified Git for Windows Bash; `cmd.exe` is unsupported. Keep each command on one physical line. The process runs with the current Agent user's permissions and that Agent's native sandbox; HogAgent marks its Windows shell as `UNSANDBOXED`.
 
 把文章、报告、论文、课程笔记、大纲或想法转换成视觉统一的图片式演示文稿。每页是一张完整的 16:9 图片，再由 `scripts/assemble_ppt.py` 组装为 `.pptx`。
 
@@ -97,8 +108,10 @@ python3 -m pip install -r "<skill_path>/requirements.txt"
 
 不要把密钥写进 `SKILL.md`、提示词、仓库文件或提交记录。多个本地 Agent 共用同一台机器时，优先使用共享运行时配置；文件权限自动设为 `0600`。
 
+以下命令中的 `{bootstrap_python}` 表示 POSIX/Git Bash 的 `python3`，或 Windows PowerShell 的 `py -3`（也可替换为已知的 Python 3 可执行文件）。
+
 ```bash
-python3 {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-image-api-key" --base-url "https://api.example.com/v1" --model "gpt-image-2"
+{bootstrap_python} {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-image-api-key" --base-url "https://api.example.com/v1" --model "gpt-image-2"
 ```
 
 也可以在启动 Agent 前设置环境变量：
@@ -121,7 +134,7 @@ export GEN_RICH_PPT_IMAGE_MODEL="gpt-image-2"
 排查配置时运行：
 
 ```bash
-python3 {skill_root}/scripts/gen_rich_ppt_runtime.py doctor --check-api
+{bootstrap_python} {skill_root}/scripts/gen_rich_ppt_runtime.py doctor --check-api
 ```
 
 详细配置、密钥安全和兼容示例见 `docs/image-model-configuration.md`；实际 API/CLI 命令见 `docs/cli-api-fallback.md`。
@@ -189,3 +202,7 @@ python3 {skill_root}/scripts/gen_rich_ppt_runtime.py doctor --check-api
 - `references/*.md`：内置视觉风格参考。
 
 本 skill 基于 MIT 许可的 [ningzimu/codex-ppt-skill](https://github.com/ningzimu/codex-ppt-skill) 改编；保留的许可文本见 `LICENSE`。
+
+## 执行安全边界
+
+配置、提示和状态 JSON 最大 10 MiB（运行时配置最大 1 MiB），单张图片最大 50 MiB、32,768 px/边且不超过 25,000,000 像素，单次最多 500 个批量任务/幻灯片任务，生成的 PPTX 最大 250 MiB。图片内容会校验真实格式和尺寸，所有最终图片、状态及 PPTX 均通过同目录临时文件原子替换。共享运行时在 POSIX 使用 `0700` 目录和 `0600` 配置文件；外部 API 必须使用 HTTPS，只有 loopback 可使用 HTTP，认证请求不跟随重定向。

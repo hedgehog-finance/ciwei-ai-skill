@@ -7,19 +7,32 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { validatePptxPackage } from "./pptx-ooxml.mjs";
+import { parseViewerArgs } from "./cli-args.mjs";
 
-const args = process.argv.slice(2);
-const fileArg = args.find((arg) => !arg.startsWith("--"));
-const viewers = new Set(args.filter((arg) => arg.startsWith("--")).map((arg) => arg.slice(2)));
-
-if (!fileArg || viewers.has("help")) {
+let parsedArgs;
+try {
+  parsedArgs = parseViewerArgs(process.argv.slice(2));
+} catch (error) {
+  console.error(`Error: ${error.message}`);
   console.error("Usage: validate-pptx.mjs <file.pptx> [--libreoffice] [--keynote] [--powerpoint]");
-  process.exit(fileArg ? 0 : 1);
+  process.exit(1);
+}
+const fileArg = parsedArgs.positionals[0];
+const viewers = new Set(Object.keys(parsedArgs.options));
+
+if (parsedArgs.help) {
+  console.log("Usage: validate-pptx.mjs <file.pptx> [--libreoffice] [--keynote] [--powerpoint]");
+  process.exit(0);
 }
 
 const inputPath = resolve(fileArg);
 if (!existsSync(inputPath)) {
   console.error(`PPTX not found: ${inputPath}`);
+  process.exit(1);
+}
+const inputStat = statSync(inputPath);
+if (!inputStat.isFile() || inputStat.size > 250 * 1024 * 1024) {
+  console.error("PPTX must be a regular file no larger than 250MB");
   process.exit(1);
 }
 
@@ -47,7 +60,7 @@ function requireNonEmptyFile(filePath, label) {
 function validateWithLibreOffice(filePath) {
   const workDir = mkdtempSync(join(tmpdir(), "gen-ppt-libreoffice-"));
   try {
-    const result = spawnSync("soffice", ["--headless", "--convert-to", "pdf", "--outdir", workDir, filePath], { encoding: "utf8" });
+    const result = spawnSync("soffice", ["--headless", "--convert-to", "pdf", "--outdir", workDir, filePath], { encoding: "utf8", shell: false, timeout: 120_000 });
     if (result.error) throw new Error(`LibreOffice is unavailable: ${result.error.message}`);
     if (result.status !== 0) throw new Error(`LibreOffice rejected the PPTX: ${(result.stderr || result.stdout).trim()}`);
     const pdfPath = join(workDir, basename(filePath).replace(/\.pptx$/i, ".pdf"));
@@ -59,7 +72,7 @@ function validateWithLibreOffice(filePath) {
 }
 
 function readBundleValue(appPath, key) {
-  const result = spawnSync("/usr/libexec/PlistBuddy", ["-c", `Print :${key}`, join(appPath, "Contents/Info.plist")], { encoding: "utf8" });
+  const result = spawnSync("/usr/libexec/PlistBuddy", ["-c", `Print :${key}`, join(appPath, "Contents/Info.plist")], { encoding: "utf8", shell: false, timeout: 10_000 });
   return result.status === 0 ? (result.stdout || "").trim() : "";
 }
 
@@ -122,7 +135,7 @@ on run argv
   end try
 end run`;
   try {
-    const result = spawnSync("osascript", ["-e", script, filePath, pdfPath], { encoding: "utf8", timeout: 750_000 });
+    const result = spawnSync("osascript", ["-e", script, filePath, pdfPath], { encoding: "utf8", shell: false, timeout: 750_000 });
     if (result.error) throw new Error(`Keynote automation failed: ${result.error.message}`);
     if (result.status !== 0) throw new Error(`Keynote open/render automation failed in ${basename(keynote.appPath)} ${keynote.version}: ${(result.stderr || result.stdout).trim()}`);
     requireNonEmptyFile(pdfPath, "Keynote");
@@ -140,7 +153,10 @@ end run`;
 }
 
 function validateWithPowerPoint(filePath) {
-  if (process.platform !== "darwin" || !existsSync("/Applications/Microsoft PowerPoint.app")) {
+  if (process.platform !== "darwin") {
+    throw new Error("Automated PowerPoint open/render validation is currently supported only on macOS");
+  }
+  if (!existsSync("/Applications/Microsoft PowerPoint.app")) {
     throw new Error("PowerPoint open/render test requested, but Microsoft PowerPoint is not installed on macOS");
   }
   const workDir = mkdtempSync(join(tmpdir(), "gen-ppt-powerpoint-"));
@@ -159,7 +175,7 @@ on run argv
   end tell
 end run`;
   try {
-    const result = spawnSync("osascript", ["-e", script, filePath, pdfPath], { encoding: "utf8", timeout: 390_000 });
+    const result = spawnSync("osascript", ["-e", script, filePath, pdfPath], { encoding: "utf8", shell: false, timeout: 390_000 });
     if (result.error) throw new Error(`PowerPoint automation failed: ${result.error.message}`);
     if (result.status !== 0) throw new Error(`PowerPoint rejected the PPTX: ${(result.stderr || result.stdout).trim()}`);
     requireNonEmptyFile(pdfPath, "PowerPoint");

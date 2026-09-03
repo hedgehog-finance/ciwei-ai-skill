@@ -134,7 +134,7 @@ test("hog-gateway-tools polls long tasks and returns their structured result", a
   }, async (url) => {
     const result = await runCli(GATEWAY_CLI, [
       "send-notification", "custom", "Long task", "Run",
-      "--poll-interval-ms", "1",
+      "--poll-interval-ms", "250",
       "--url", url,
       "--token", TEST_TOKEN,
     ]);
@@ -167,7 +167,7 @@ test("hog-gateway-tools returns exit code 42 for input_required", async () => {
   }, async (url) => {
     const result = await runCli(GATEWAY_CLI, [
       "get-watchlist",
-      "--poll-interval-ms", "1",
+      "--poll-interval-ms", "250",
       "--url", url,
       "--token", TEST_TOKEN,
     ]);
@@ -448,8 +448,8 @@ test("deliver_files preserves restricted resource links", async () => {
 
 test("Gateway delivery CLIs accept UTF-8 JSON parameter files", async () => {
   const tempDirectory = await mkdtemp(join(tmpdir(), "hedgehog-json-files-"));
-  const filesPath = join(tempDirectory, "files.json");
-  const deliveryPath = join(tempDirectory, "delivery-files.json");
+  const filesPath = join(tempDirectory, "tmp-deliver_files-1.json");
+  const deliveryPath = join(tempDirectory, "tmp-hog-gateway-tools-1.json");
   await writeFile(filesPath, `\uFEFF${JSON.stringify([
     { path: "tasks/task-file/报告 O'Reilly.pdf", summary: "中文摘要" },
   ])}`, "utf8");
@@ -505,6 +505,22 @@ test("Gateway delivery CLIs accept UTF-8 JSON parameter files", async () => {
       },
     },
   ]);
+});
+
+test("Gateway delivery CLIs reject damaged inline JSON with file-option guidance", async () => {
+  for (const [script, args] of [
+    [GATEWAY_CLI, ["deliver-files", "--files-json", "[{path:report.pdf}]", "--task-id", "task-file"]],
+    [GATEWAY_CLI, ["report-task-result", "task-file", "--delivery-files-json", "[{path:report.pdf}]"]],
+    [DELIVER_FILES_CLI, ["--files-json", "[{path:report.pdf}]", "--task-id", "task-file"]],
+  ]) {
+    const result = await runCli(script, [
+      ...args,
+      "--url", "http://127.0.0.1:59102/mcp",
+      "--token", TEST_TOKEN,
+    ]);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /use --(?:files-json|delivery-files-json)-file <tmp-\*\.json> for complex values/);
+  }
 });
 
 test("CLIs reject missing credentials and cross-user watchlist arguments", async () => {

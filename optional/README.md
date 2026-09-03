@@ -6,9 +6,9 @@ Optional extension skills that are not part of the core platform bundles. Contai
 
 | Skill | Version | Description |
 |------|------|------|
-| `gen-rich-ppt` | 1.0.0 | Rich image-based PPT/PPTX generation with built-in or OpenAI-compatible image models |
-| `hog-finnhub` | 1.0.0 | Global stock data via Finnhub API (excludes China A-shares) |
-| `hog-openbb` | 1.0.1 | Global financial data via OpenBB Platform (excludes China A-shares) |
+| `gen-rich-ppt` | 1.1.2 | Rich image-based PPT/PPTX generation with built-in or OpenAI-compatible image models |
+| `hog-finnhub` | 1.1.2 | Global stock data via Finnhub API (excludes China A-shares) |
+| `hog-openbb` | 1.1.2 | Global financial data via OpenBB Platform (excludes China A-shares) |
 
 ## Directory Structure
 

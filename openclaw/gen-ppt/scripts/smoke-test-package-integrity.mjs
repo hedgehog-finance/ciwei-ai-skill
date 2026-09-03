@@ -8,15 +8,27 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import JSZip from "jszip";
 import { normalizeAndValidatePptx, validatePptxPackage } from "./pptx-ooxml.mjs";
+import { parseViewerArgs } from "./cli-args.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
+let parsedArgs;
+try {
+  parsedArgs = parseViewerArgs(process.argv.slice(2), { requireFile: false });
+} catch (error) {
+  console.error(`Error: ${error.message}`);
+  process.exit(1);
+}
+if (parsedArgs.help) {
+  console.log("Usage: smoke-test-package-integrity.mjs [--libreoffice] [--keynote] [--powerpoint]");
+  process.exit(0);
+}
+const viewerFlags = Object.keys(parsedArgs.options).map((name) => `--${name}`);
 const workDir = mkdtempSync(join(tmpdir(), "gen-ppt-package-integrity-"));
-const viewerFlags = process.argv.slice(2).filter((arg) => ["--libreoffice", "--keynote", "--powerpoint"].includes(arg));
 const keynoteRequested = viewerFlags.includes("--keynote");
 const positiveViewerFlags = viewerFlags.filter((flag) => flag !== "--keynote");
 
 function run(command, args, expectSuccess = true) {
-  const result = spawnSync(command, args, { encoding: "utf8" });
+  const result = spawnSync(command, args, { encoding: "utf8", shell: false, timeout: 300_000 });
   const output = `${result.stdout || ""}${result.stderr || ""}`;
   if (expectSuccess && (result.error || result.status !== 0)) throw new Error(output.trim() || result.error?.message || `${command} failed`);
   if (!expectSuccess && !result.error && result.status === 0) throw new Error(`Expected failure but command succeeded: ${command} ${args.join(" ")}`);
@@ -74,6 +86,20 @@ try {
   }
   if (!/GenPPT \d+\.\d+\.\d+/.test(generationOutput) || !/SHA-256 [a-f0-9]{64}/.test(generationOutput)) {
     throw new Error(`Generation did not report an auditable version and fingerprint: ${generationOutput.trim()}`);
+  }
+  const invalidBase64Path = join(workDir, "tmp-gen-ppt-invalid-base64.json");
+  writeFileSync(invalidBase64Path, JSON.stringify({
+    slides: [{ layout: "blank", elements: [{
+      type: "image", x: 1, y: 1, w: 1, h: 1, content: { data: "not-valid-base64!" },
+    }] }],
+  }));
+  const invalidBase64Failure = run(
+    process.execPath,
+    [join(scriptDir, "gen-ppt.mjs"), invalidBase64Path, join(workDir, "invalid-base64.pptx")],
+    false,
+  );
+  if (!invalidBase64Failure.includes("valid base64 encoding")) {
+    throw new Error(`Invalid base64 failed for the wrong reason: ${invalidBase64Failure.trim()}`);
   }
   const validationOutput = run(process.execPath, [join(scriptDir, "validate-pptx.mjs"), outputPath, ...positiveViewerFlags]);
   if (!/Artifact verified: .*; \d+ bytes; SHA-256 [a-f0-9]{64}/.test(validationOutput) || !/5 slides/.test(validationOutput)) {

@@ -20,7 +20,15 @@ from slide_run_state import (
     rel_to_deck,
     save_jobs,
     set_run_status,
+    write_json,
 )
+
+
+MAX_SPEC_BYTES = 10 * 1024 * 1024
+MAX_SLIDE_NUMBER = 9999
+MAX_SLIDES = 500
+MAX_JOB_BYTES = 10 * 1024 * 1024
+MAX_ALL_JOB_BYTES = 100 * 1024 * 1024
 
 
 def _die(message: str) -> None:
@@ -31,9 +39,11 @@ def _die(message: str) -> None:
 def _read_json(path: Path) -> Dict[str, Any]:
     if not path.exists():
         _die(f"Spec file not found: {path}")
+    if not path.is_file() or path.stat().st_size > MAX_SPEC_BYTES:
+        _die(f"Spec must be a regular JSON file no larger than 10MB: {path}")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         _die(f"Invalid JSON in {path}: {exc}")
     if not isinstance(data, dict):
         _die("Deck spec must be a JSON object.")
@@ -173,8 +183,8 @@ def _slide_number(slide: Dict[str, Any], fallback: int) -> int:
         number = int(raw)
     except (TypeError, ValueError):
         _die(f"Invalid slide number: {raw}")
-    if number <= 0:
-        _die(f"Slide number must be positive: {number}")
+    if number <= 0 or number > MAX_SLIDE_NUMBER:
+        _die(f"Slide number must be between 1 and {MAX_SLIDE_NUMBER}: {number}")
     return number
 
 
@@ -280,7 +290,9 @@ def _job_images(
     return images
 
 
-def _write_template(path: Path) -> None:
+def _write_template(path: Path, *, force: bool = False) -> None:
+    if path.exists() and not force:
+        _die(f"Template file already exists: {path} (use --force)")
     template = {
         "deck_name": "example-deck",
         "language": "Chinese",
@@ -347,7 +359,7 @@ def _write_template(path: Path) -> None:
             },
         ],
     }
-    path.write_text(json.dumps(template, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_json(path, template)
 
 
 def main() -> int:
@@ -369,7 +381,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.write_template:
-        _write_template(Path(args.write_template))
+        if args.spec or args.out_dir or args.selected_backend or args.max_concurrent_slides is not None:
+            parser.error("--write-template cannot be combined with deck preparation options")
+        _write_template(Path(args.write_template), force=args.force)
         return 0
 
     if not args.spec or not args.out_dir:
@@ -381,6 +395,8 @@ def main() -> int:
     slides = spec.get("slides")
     if not isinstance(slides, list) or not slides:
         _die("Deck spec must include a non-empty slides array.")
+    if len(slides) > MAX_SLIDES:
+        _die(f"Deck spec must not contain more than {MAX_SLIDES} slides.")
 
     numbered_slides: List[tuple[int, Dict[str, Any], int]] = []
     seen_slide_numbers: Dict[int, int] = {}
@@ -400,6 +416,9 @@ def main() -> int:
     prompts_dir = out_dir / "prompts"
     prompts_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "origin_image").mkdir(parents=True, exist_ok=True)
+    jobs_path = out_dir / "slide_jobs.json"
+    if jobs_path.exists() and not args.force:
+        _die(f"Slide job state already exists: {jobs_path} (use --force)")
 
     global_style_reference = spec.get("approved_style_reference")
     if global_style_reference is not None and not isinstance(global_style_reference, dict):
@@ -411,16 +430,29 @@ def main() -> int:
     sample_generation_method = _sample_generation_method(spec, base_dir=spec_dir)
     max_concurrent_slides = args.max_concurrent_slides
     if max_concurrent_slides is None:
-        max_concurrent_slides = int(spec.get("max_concurrent_slides", DEFAULT_MAX_CONCURRENT_SLIDES))
-    if max_concurrent_slides < 1:
-        _die("max_concurrent_slides must be >= 1.")
+        raw_max_concurrent = spec.get("max_concurrent_slides", DEFAULT_MAX_CONCURRENT_SLIDES)
+        if isinstance(raw_max_concurrent, bool):
+            _die("max_concurrent_slides must be an integer >= 1.")
+        try:
+            max_concurrent_slides = int(raw_max_concurrent)
+        except (TypeError, ValueError):
+            _die("max_concurrent_slides must be an integer >= 1.")
+        if str(raw_max_concurrent).strip() != str(max_concurrent_slides):
+            _die("max_concurrent_slides must be an integer >= 1.")
+    if max_concurrent_slides < 1 or max_concurrent_slides > 64:
+        _die("max_concurrent_slides must be an integer from 1 through 64.")
     selected_backend = (
         args.selected_backend
         or spec.get("selected_image_backend")
         or spec.get("image_backend")
         or _method_backend_label(sample_generation_method)
     )
+    if not isinstance(selected_backend, str) or not selected_backend.strip():
+        _die("Select a non-empty image backend with --selected-backend or selected_image_backend in the spec.")
+    selected_backend = selected_backend.strip()
     slide_job_entries: List[Dict[str, Any]] = []
+    prompt_files: List[tuple[Path, Dict[str, Any]]] = []
+    total_job_bytes = 0
 
     for fallback, slide, number in numbered_slides:
         use_style_reference = bool(slide.get("use_approved_style_reference", True))
@@ -458,7 +490,13 @@ def main() -> int:
         prompt_path = prompts_dir / f"slide_{number:02d}.json"
         if prompt_path.exists() and not args.force:
             _die(f"Slide job file already exists: {prompt_path} (use --force)")
-        prompt_path.write_text(json.dumps(job, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        job_bytes = len((json.dumps(job, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+        if job_bytes > MAX_JOB_BYTES:
+            _die(f"Slide {number} job exceeds the 10MB limit.")
+        total_job_bytes += job_bytes
+        if total_job_bytes > MAX_ALL_JOB_BYTES:
+            _die("Generated slide jobs exceed the 100MB aggregate limit.")
+        prompt_files.append((prompt_path, job))
         slide_id = f"slide_{number:02d}"
         final_image = out_dir / "origin_image" / f"{slide_id}.png"
         sample_approved = bool(slide.get("sample_approved") or slide.get("approved_sample"))
@@ -483,6 +521,9 @@ def main() -> int:
                 "blocker": None,
             }
         )
+
+    for prompt_path, job in prompt_files:
+        write_json(prompt_path, job)
 
     slide_jobs = {
         "run_status": "jobs_prepared",

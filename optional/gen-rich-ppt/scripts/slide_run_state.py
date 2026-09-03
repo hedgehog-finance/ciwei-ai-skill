@@ -19,6 +19,8 @@ ACTIVE_SLIDE_STATUSES = {"dispatched"}
 DISPATCHABLE_SLIDE_STATUSES = {"pending"}
 TERMINAL_SLIDE_STATUSES = {"recorded", "accepted", "blocked"}
 DEFAULT_MAX_CONCURRENT_SLIDES = 6
+MAX_STATE_BYTES = 10 * 1024 * 1024
+MAX_STATE_HISTORY = 1000
 
 
 def now_iso() -> str:
@@ -31,7 +33,9 @@ def read_json(path: Path, default: Any = None) -> Any:
         if default is not None:
             return default
         raise FileNotFoundError(path)
-    return json.loads(path.read_text(encoding="utf-8"))
+    if not path.is_file() or path.stat().st_size > MAX_STATE_BYTES:
+        raise ValueError(f"JSON state must be a regular file no larger than 10MB: {path}")
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def write_json(path: Path, data: Any) -> None:
@@ -55,7 +59,7 @@ def locked_json(path: Path, default: Any = None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(f".{path.name}.lock")
-    with FileLock(str(lock_path)):
+    with FileLock(str(lock_path), timeout=30):
         data = read_json(path, default=default)
         try:
             yield data
@@ -120,6 +124,7 @@ def set_run_status(deck_dir: Path, status: str, note: str | None = None) -> Dict
             state.setdefault("history", []).append(
                 {"from": state.get("status"), "to": status, "at": now_iso(), "note": note}
             )
+            state["history"] = state["history"][-MAX_STATE_HISTORY:]
         state["status"] = status
         state["updated_at"] = now_iso()
     return state
@@ -129,9 +134,9 @@ def normalize_slide_id(value: Any) -> str:
     text = str(value).strip()
     if text.startswith("slide_"):
         suffix = text.removeprefix("slide_")
-        if suffix.isdigit():
+        if suffix.isdigit() and int(suffix) > 0:
             return f"slide_{int(suffix):02d}"
-    if text.isdigit():
+    if text.isdigit() and int(text) > 0:
         return f"slide_{int(text):02d}"
     raise ValueError(f"Invalid slide id: {value}")
 
@@ -155,10 +160,12 @@ def rel_to_deck(deck_dir: Path, value: Path) -> str:
     return Path(value).resolve().relative_to(Path(deck_dir).resolve()).as_posix()
 
 
-def ensure_file(path: Path, label: str) -> Path:
+def ensure_file(path: Path, label: str, max_bytes: int | None = None) -> Path:
     path = Path(path)
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(f"Missing {label}: {path}")
+    if max_bytes is not None and path.stat().st_size > max_bytes:
+        raise ValueError(f"{label} exceeds the {max_bytes}-byte limit: {path}")
     return path
 
 
@@ -172,13 +179,15 @@ def dispatchable_slides(jobs: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def max_concurrent_slides(jobs: Dict[str, Any]) -> int:
     value = jobs.get("max_concurrent_slides", DEFAULT_MAX_CONCURRENT_SLIDES)
+    if isinstance(value, bool):
+        raise ValueError(f"Invalid max_concurrent_slides: {value}")
     try:
-        value = int(value)
+        parsed = int(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid max_concurrent_slides: {value}") from exc
-    if value < 1:
-        raise ValueError("max_concurrent_slides must be >= 1")
-    return value
+    if str(value).strip() != str(parsed) or parsed < 1 or parsed > 64:
+        raise ValueError("max_concurrent_slides must be an integer from 1 through 64")
+    return parsed
 
 
 def dispatch_slots_available(jobs: Dict[str, Any]) -> int:

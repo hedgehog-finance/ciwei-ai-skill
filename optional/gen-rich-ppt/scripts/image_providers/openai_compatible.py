@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 from pathlib import Path
 import re
@@ -35,7 +36,7 @@ def _dependency_hint(package: str, *, upgrade: bool = False) -> str:
     requirements = _skill_root() / "requirements.txt"
     return (
         "Install gen-rich-ppt dependencies in the shared runtime first, for example "
-        f"`python3 {_skill_root() / 'scripts' / 'gen_rich_ppt_runtime.py'} bootstrap`, "
+        f"`{sys.executable} {_skill_root() / 'scripts' / 'gen_rich_ppt_runtime.py'} bootstrap`, "
         f"or install {package} directly with `{runtime_python} -m pip install "
         f"{package_arg}`. Requirements file: `{requirements}`."
     )
@@ -44,13 +45,13 @@ def _dependency_hint(package: str, *, upgrade: bool = False) -> str:
 def _extract_retry_after_seconds(exc: Exception) -> Optional[float]:
     for attr in ("retry_after", "retry_after_seconds"):
         val = getattr(exc, attr, None)
-        if isinstance(val, (int, float)) and val >= 0:
-            return float(val)
+        if isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val) and val >= 0:
+            return min(60.0, float(val))
     msg = str(exc)
     m = re.search(r"retry[- ]after[:= ]+([0-9]+(?:\\.[0-9]+)?)", msg, re.IGNORECASE)
     if m:
         try:
-            return float(m.group(1))
+            return min(60.0, float(m.group(1)))
         except Exception:
             return None
     return None
@@ -119,7 +120,7 @@ class OpenAICompatibleImageProvider(ImageProvider):
 
     def generate(self, payload: Dict[str, Any]) -> List[str]:
         result = self._create_client().images.generate(**payload)
-        return [item.b64_json for item in result.data]
+        return _response_images(result)
 
     def edit(
         self,
@@ -133,7 +134,7 @@ class OpenAICompatibleImageProvider(ImageProvider):
             if mask_file is not None:
                 request["mask"] = mask_file
             result = self._create_client().images.edit(**request)
-        return [item.b64_json for item in result.data]
+        return _response_images(result)
 
     async def generate_batch(
         self,
@@ -148,7 +149,7 @@ class OpenAICompatibleImageProvider(ImageProvider):
             attempts=attempts,
             job_label=job_label,
         )
-        return [item.b64_json for item in result.data]
+        return _response_images(result)
 
     def _create_client(self) -> Any:
         if self._client_factory is not None:
@@ -159,7 +160,7 @@ class OpenAICompatibleImageProvider(ImageProvider):
             raise RuntimeError(
                 f"openai SDK not installed in the active environment. {_dependency_hint('openai')}"
             ) from exc
-        return OpenAI(api_key=self.api_key, base_url=self.base_url)
+        return OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=600.0)
 
     def _create_async_client(self) -> Any:
         if self._async_client is not None:
@@ -180,8 +181,25 @@ class OpenAICompatibleImageProvider(ImageProvider):
                 "AsyncOpenAI not available in this openai SDK version. "
                 f"{_dependency_hint('openai', upgrade=True)}"
             ) from exc
-        self._async_client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+        self._async_client = AsyncOpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=600.0,
+        )
         return self._async_client
+
+
+def _response_images(result: Any) -> List[str]:
+    data = getattr(result, "data", None)
+    if not isinstance(data, list) or not data:
+        raise RuntimeError("Image API response did not contain image data.")
+    images: List[str] = []
+    for index, item in enumerate(data, start=1):
+        value = getattr(item, "b64_json", None)
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError(f"Image API response item {index} did not contain base64 image data.")
+        images.append(value)
+    return images
 
 
 def _open_files(paths: List[Path]):
@@ -226,8 +244,13 @@ class _FileBundle:
         self._handles: List[object] = []
 
     def __enter__(self):
-        self._handles = [p.open("rb") for p in self._paths]
-        return self._handles
+        try:
+            for path in self._paths:
+                self._handles.append(path.open("rb"))
+            return self._handles
+        except Exception:
+            self.__exit__(*sys.exc_info())
+            raise
 
     def __exit__(self, exc_type, exc, tb):
         for handle in self._handles:

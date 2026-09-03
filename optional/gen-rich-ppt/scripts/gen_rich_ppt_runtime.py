@@ -15,6 +15,7 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import tempfile
 from typing import Dict, Iterable, Optional
 import urllib.error
 import urllib.parse
@@ -25,6 +26,7 @@ import venv
 DEFAULT_RUNTIME_HOME = "~/.gen-rich-ppt"
 DEFAULT_MODEL = "gpt-image-2"
 ENV_FIELDS = ("OPENAI_API_KEY", "OPENAI_BASE_URL", "GEN_RICH_PPT_IMAGE_MODEL")
+MAX_CONFIG_BYTES = 1024 * 1024
 DEDICATED_ENV_FIELDS = {
     "GEN_RICH_PPT_API_KEY": "OPENAI_API_KEY",
     "GEN_RICH_PPT_BASE_URL": "OPENAI_BASE_URL",
@@ -81,14 +83,26 @@ def _mask_secret(value: str) -> str:
 def _parse_env_file(path: Path) -> Dict[str, str]:
     if not path.exists():
         return {}
+    if not path.is_file() or path.stat().st_size > MAX_CONFIG_BYTES:
+        _die(f"Runtime config must be a regular file no larger than 1MB: {path}")
     values: Dict[str, str] = {}
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
         key = key.strip()
-        value = value.strip().strip('"').strip("'")
+        value = value.strip()
+        if value.startswith('"'):
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError as exc:
+                _die(f"Invalid quoted value for {key} in {path}: {exc}")
+            if not isinstance(decoded, str):
+                _die(f"Invalid non-string value for {key} in {path}")
+            value = decoded
+        elif value.startswith("'") and value.endswith("'"):
+            value = value[1:-1]
         if key:
             values[key] = value
     return values
@@ -113,26 +127,38 @@ def _write_env_file(path: Path, values: Dict[str, str]) -> None:
         if value:
             lines.append(f"{key}={_quote_env_value(value)}")
     lines.append("")
-    path.write_text("\n".join(lines), encoding="utf-8")
+    body = "\n".join(lines)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    except OSError:
-        pass
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(body)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if os.name != "nt":
+            os.chmod(temp_name, stat.S_IRUSR | stat.S_IWUSR)
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
 
 
 def _load_hogagent_values() -> Dict[str, str]:
     path = _hogagent_config_path()
     if not path.exists():
         return {}
+    if not path.is_file() or path.stat().st_size > MAX_CONFIG_BYTES:
+        _die(f"HogAgent skill config must be a regular file no larger than 1MB: {path}")
     try:
-        root = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+        root = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        _die(f"Unable to parse HogAgent skill config {path}: {exc}")
     if not isinstance(root, dict):
-        return {}
+        _die(f"HogAgent skill config root must be a JSON object: {path}")
     entry = root.get(HOGAGENT_SKILL_NAME)
-    if not isinstance(entry, dict):
+    if entry is None:
         return {}
+    if not isinstance(entry, dict):
+        _die(f"HogAgent skill config entry {HOGAGENT_SKILL_NAME} must be an object")
 
     values: Dict[str, str] = {}
     for env_name, aliases in HOGAGENT_FIELD_ALIASES.items():
@@ -178,6 +204,8 @@ def _load_env_values(home: Path) -> Dict[str, str]:
 def _ensure_dirs(home: Path) -> None:
     for child in (home, home / "cache", home / "logs"):
         child.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            child.chmod(stat.S_IRWXU)
 
 
 def _bootstrap(args: argparse.Namespace) -> int:
@@ -198,7 +226,10 @@ def _bootstrap(args: argparse.Namespace) -> int:
     if args.upgrade:
         cmd.insert(4, "-U")
     print(f"Installing dependencies from: {requirements}")
-    subprocess.run(cmd, check=True)
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as exc:
+        _die(f"Dependency installation failed with exit code {exc.returncode}")
     print(f"Runtime ready: {home}")
     return 0
 
@@ -209,13 +240,22 @@ def _config(args: argparse.Namespace) -> int:
     env_file = _env_path(home)
     values = _parse_env_file(env_file)
 
-    if args.api_key:
-        values["OPENAI_API_KEY"] = args.api_key
+    if args.api_key is not None:
+        api_key = args.api_key.strip()
+        if not api_key:
+            _die("--api-key requires a non-empty value.")
+        if "\r" in api_key or "\n" in api_key or len(api_key) > 8192:
+            _die("--api-key must be a single-line value no longer than 8192 characters.")
+        values["OPENAI_API_KEY"] = api_key
 
     if args.base_url is not None:
-        values["OPENAI_BASE_URL"] = args.base_url.strip()
+        base_url = _normalize_base_url(args.base_url, "--base-url")
+        values["OPENAI_BASE_URL"] = base_url
     if args.model is not None:
-        values["GEN_RICH_PPT_IMAGE_MODEL"] = args.model.strip()
+        model = args.model.strip()
+        if not model or len(model) > 512 or any(ord(char) < 32 or ord(char) == 127 for char in model):
+            _die("--model requires a single-line value no longer than 512 characters.")
+        values["GEN_RICH_PPT_IMAGE_MODEL"] = model
 
     if args.clear_base_url:
         values.pop("OPENAI_BASE_URL", None)
@@ -235,12 +275,17 @@ def _check_python_imports(python: Path) -> bool:
         print(f"venv: missing ({python})")
         return False
     code = "import openai, PIL, pptx; print('imports ok')"
-    proc = subprocess.run(
-        [str(python), "-c", code],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    try:
+        proc = subprocess.run(
+            [str(python), "-c", code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        print("dependencies: import check timed out after 60 seconds")
+        return False
     if proc.returncode != 0:
         print("dependencies: missing or broken")
         if proc.stderr.strip():
@@ -258,7 +303,8 @@ def _models_request(base_url: str, api_key: str, timeout: int) -> bool:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        opener = urllib.request.build_opener(_NoRedirectHandler())
+        with opener.open(req, timeout=timeout) as resp:
             print(f"models endpoint: HTTP {resp.status}")
             return 200 <= resp.status < 300
     except urllib.error.HTTPError as exc:
@@ -274,7 +320,29 @@ def _models_request(base_url: str, api_key: str, timeout: int) -> bool:
 
 def _is_atlascloud_base_url(base_url: str) -> bool:
     hostname = urllib.parse.urlparse(base_url).hostname or ""
-    return "atlascloud.ai" in hostname.lower()
+    hostname = hostname.lower()
+    return hostname == "atlascloud.ai" or hostname.endswith(".atlascloud.ai")
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _normalize_base_url(value: str, source: str) -> str:
+    base_url = value.strip().rstrip("/")
+    if len(base_url) > 2048:
+        _die(f"{source} must not exceed 2048 characters.")
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        _die(f"{source} must be a valid HTTP or HTTPS URL.")
+    if parsed.username is not None or parsed.password is not None:
+        _die(f"{source} must not contain embedded credentials.")
+    if parsed.scheme != "https" and parsed.hostname.lower() not in {"localhost", "127.0.0.1", "::1"}:
+        _die(f"{source} must use HTTPS unless it targets loopback.")
+    if parsed.query or parsed.fragment:
+        _die(f"{source} must not contain a query string or fragment.")
+    return base_url
 
 
 def _doctor(args: argparse.Namespace) -> int:
@@ -302,6 +370,11 @@ def _doctor(args: argparse.Namespace) -> int:
     print(f"OPENAI_BASE_URL={base_url}")
     print(f"GEN_RICH_PPT_IMAGE_MODEL={model}")
 
+    try:
+        base_url = _normalize_base_url(base_url, "OPENAI_BASE_URL")
+    except SystemExit:
+        return 1
+
     if "gpt-image-" not in model:
         print("model check: warning, model name should contain 'gpt-image-'")
         ok = False
@@ -320,6 +393,16 @@ def _doctor(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def _positive_integer(value: str, option: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{option} must be a positive integer") from exc
+    if parsed < 1 or str(parsed) != value.strip():
+        raise argparse.ArgumentTypeError(f"{option} must be a positive integer")
+    return parsed
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage the gen-rich-ppt shared runtime")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -330,14 +413,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     config = subparsers.add_parser("config", help="Write or update shared .env")
     config.add_argument("--api-key")
-    config.add_argument("--base-url")
-    config.add_argument("--clear-base-url", action="store_true")
+    base_url_group = config.add_mutually_exclusive_group()
+    base_url_group.add_argument("--base-url")
+    base_url_group.add_argument("--clear-base-url", action="store_true")
     config.add_argument("--model")
     config.set_defaults(func=_config)
 
     doctor = subparsers.add_parser("doctor", help="Check runtime and optional API access")
     doctor.add_argument("--check-api", action="store_true")
-    doctor.add_argument("--timeout", type=int, default=30)
+    doctor.add_argument("--timeout", type=lambda value: _positive_integer(value, "--timeout"), default=30)
     doctor.set_defaults(func=_doctor)
 
     return parser

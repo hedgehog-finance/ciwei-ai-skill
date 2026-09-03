@@ -1,7 +1,7 @@
 {
   "name": "table-convert",
   "license": "GPL-3.0",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "private": true,
   "type": "module",
   "description": "Convert spreadsheets (xlsx/xls/csv) to JSON or Markdown",

@@ -26,6 +26,10 @@ if (ext !== ".pdf") {
   log("error", `Unsupported file type "${ext}". Supported: .pdf`);
   process.exit(1);
 }
+if (![".md", ".markdown"].includes(extname(outputPath).toLowerCase())) {
+  log("error", "Output file must use a .md or .markdown extension");
+  process.exit(1);
+}
 
 try {
   const config = loadConfig();

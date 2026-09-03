@@ -8,8 +8,7 @@
  *   - nrr         : NRR 净收入留存率估值法（AI SaaS 专用）
  *
  * Usage:
- *   node ./scripts/strategic.mjs <method> '<params-json>'
- *   node ./scripts/strategic.mjs <method> --params-file <params.json>
+ *   node ./scripts/strategic.mjs <method> [--key value ... | --params-file <tmp-*.json>]
  */
 
 import { fileURLToPath } from 'node:url';
@@ -26,6 +25,41 @@ function pct(v, d = 2) {
   return `${(v * 100).toFixed(d)}%`;
 }
 
+function assertFiniteOutput(value, path = 'result') {
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new Error(`${path} is not finite; check zero denominators and parameter ranges`);
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertFiniteOutput(item, `${path}[${index}]`));
+  } else if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      assertFiniteOutput(item, `${path}.${key}`);
+    }
+  }
+}
+
+function projectionYearCount(value) {
+  if (!Number.isInteger(value) || value < 1 || value > 100) {
+    throw new Error('projectionYears 必须是 1 到 100 之间的整数');
+  }
+  return value;
+}
+
+const NUMERIC_PARAMETERS = new Set([
+  'tam', 'serviceableRatio', 'marketShare', 'targetNetMargin', 'industryPS', 'industryPE',
+  'arpu', 'grossMargin', 'cac', 'churnRate', 'retentionPeriod', 'currentUsers',
+  'userGrowthRate', 'discountRate', 'projectionYears', 'terminalGrowthRate',
+  'currentARR', 'nrr',
+]);
+
+function validateNumericParameters(params) {
+  for (const name of NUMERIC_PARAMETERS) {
+    if (params[name] !== undefined && (typeof params[name] !== 'number' || !Number.isFinite(params[name]))) {
+      throw new Error(`${name} 必须是 JSON number，不能使用数字字符串`);
+    }
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 4.1 TAM/SAM/SOM（空间测算法 → 公司估值）
 // ═══════════════════════════════════════════════════════════════════════════
@@ -40,12 +74,13 @@ function calcTAMSAMSOM(p) {
   if (marketShare === undefined) {
     throw new Error('缺少必填参数: marketShare (预期市占率)');
   }
-  const targetNetMargin = p.targetNetMargin ?? 0;
+  const targetNetMargin = p.targetNetMargin;
 
   // 第一步：市场规模
   const sam = tam * serviceableRatio;
   const som = sam * marketShare;
-  const somRevenue = som * targetNetMargin;
+  const somRevenue = som;
+  const somNetProfit = targetNetMargin === undefined ? null : somRevenue * targetNetMargin;
 
   // 第二步：公司估值
   let estimatedValue = null;
@@ -56,8 +91,11 @@ function calcTAMSAMSOM(p) {
     estimatedValue = somRevenue * p.industryPS;
     valuationMethod = 'P/S';
   } else if (p.industryPE !== undefined) {
-    // 估值 = SOM预期收入 × 行业P/E
-    estimatedValue = somRevenue * p.industryPE;
+    if (somNetProfit === null) {
+      throw new Error('使用 industryPE 时必须提供 targetNetMargin，以便由 SOM 收入推算净利润');
+    }
+    // 估值 = SOM预期净利润 × 行业P/E
+    estimatedValue = somNetProfit * p.industryPE;
     valuationMethod = 'P/E';
   }
 
@@ -66,6 +104,7 @@ function calcTAMSAMSOM(p) {
     sam: round(sam, 2),
     som: round(som, 2),
     somRevenue: round(somRevenue, 2),
+    somNetProfit: somNetProfit === null ? null : round(somNetProfit, 2),
     components: {
       step1_marketSize: {
         formula: 'SAM = TAM × serviceableRatio; SOM = SAM × marketShare',
@@ -75,8 +114,7 @@ function calcTAMSAMSOM(p) {
         som: round(som, 2),
       },
       step2_revenue: {
-        formula: 'SOM预期收入 = SOM × 目标净利率',
-        targetNetMargin,
+        formula: 'SOM预期收入 = SOM',
         somRevenue: round(somRevenue, 2),
       },
     },
@@ -85,7 +123,7 @@ function calcTAMSAMSOM(p) {
   if (estimatedValue !== null) {
     result.estimatedValue = round(estimatedValue, 2);
     result.components.step3_valuation = {
-      formula: `估值 = SOM预期收入 × 行业${valuationMethod}`,
+      formula: `估值 = SOM预期${valuationMethod === 'P/S' ? '收入' : '净利润'} × 行业${valuationMethod}`,
       [`industry${valuationMethod}`]: p.industryPS ?? p.industryPE,
       estimatedValue: round(estimatedValue, 2),
     };
@@ -95,7 +133,7 @@ function calcTAMSAMSOM(p) {
   }
 
   result.formula =
-    'SAM = TAM × serviceableRatio; SOM = SAM × marketShare; 估值 = SOM预期收入 × 行业P/S(或P/E)';
+    'SAM = TAM × serviceableRatio; SOM收入 = SAM × marketShare; P/S估值 = SOM收入 × 行业P/S; P/E估值 = SOM收入 × 目标净利率 × 行业P/E';
 
   return result;
 }
@@ -171,7 +209,7 @@ function calcLTVCAC(p) {
   if (currentUsers !== undefined) {
     const userGrowthRate = p.userGrowthRate ?? 0;
     const discountRate = p.discountRate ?? 0.10;
-    const projectionYears = p.projectionYears ?? 5;
+    const projectionYears = projectionYearCount(p.projectionYears ?? 5);
     const terminalGrowthRate = p.terminalGrowthRate ?? 0.03;
 
     // 逐年推算自由现金流
@@ -258,7 +296,7 @@ function calcNRR(p) {
     throw new Error('缺少必填参数: nrr (净收入留存率，如 1.25 表示 125%)');
   }
   const userGrowthRate = p.userGrowthRate ?? 0;
-  const projectionYears = p.projectionYears ?? 3;
+  const projectionYears = projectionYearCount(p.projectionYears ?? 3);
   const industryPS = p.industryPS;
 
   // NRR 解读
@@ -358,8 +396,8 @@ function main() {
 
   if (argv.length < 1 || argv[0] === '--help' || argv[0] === '-h') {
     const help = VALID_METHODS.map((m) => `  ${m.padEnd(20)} ${METHODS[m].desc}`).join('\n');
-    console.log(`用法: node strategic.mjs <method> '<params-json>'\n      node strategic.mjs <method> --params-file <params.json>\n\n支持方法:\n${help}`);
-    process.exit(0);
+    console.log(`用法: node strategic.mjs <method> [--key value ... | --params-file <tmp-*.json>]\n      人工兼容: node strategic.mjs <method> '<params-json>'\n\n支持方法:\n${help}`);
+    return;
   }
 
   const method = argv[0].toLowerCase();
@@ -369,6 +407,7 @@ function main() {
   }
 
   const params = readJsonParams(argv.slice(1));
+  validateNumericParameters(params);
 
   const missing = def.required.filter((k) => params[k] === undefined);
   if (missing.length > 0) {
@@ -376,11 +415,17 @@ function main() {
   }
 
   const result = def.exec(params);
+  assertFiniteOutput(result);
   console.log(JSON.stringify({ method, ...result }, null, 2));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main();
+  try {
+    main();
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+    process.exitCode = 1;
+  }
 }
 
 export { METHODS, VALID_METHODS };

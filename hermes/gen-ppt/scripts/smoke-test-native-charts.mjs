@@ -7,15 +7,27 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import pptxgen from "pptxgenjs";
+import { parseViewerArgs } from "./cli-args.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
+let parsedArgs;
+try {
+  parsedArgs = parseViewerArgs(process.argv.slice(2), { requireFile: false });
+} catch (error) {
+  console.error(`Error: ${error.message}`);
+  process.exit(1);
+}
+if (parsedArgs.help) {
+  console.log("Usage: smoke-test-native-charts.mjs [--libreoffice] [--keynote] [--powerpoint]");
+  process.exit(0);
+}
+const viewerFlags = Object.keys(parsedArgs.options).map((name) => `--${name}`);
 const workDir = mkdtempSync(join(tmpdir(), "gen-ppt-native-chart-smoke-"));
-const viewerFlags = process.argv.slice(2).filter((arg) => ["--libreoffice", "--keynote", "--powerpoint"].includes(arg));
 const keynoteRequested = viewerFlags.includes("--keynote");
 const positiveViewerFlags = viewerFlags.filter((flag) => flag !== "--keynote");
 
 function run(command, args, expectSuccess = true) {
-  const result = spawnSync(command, args, { encoding: "utf8" });
+  const result = spawnSync(command, args, { encoding: "utf8", shell: false, timeout: 300_000 });
   const output = `${result.stdout || ""}${result.stderr || ""}`;
   if (expectSuccess && (result.error || result.status !== 0)) throw new Error(output.trim() || result.error?.message || `${command} failed`);
   if (!expectSuccess && !result.error && result.status === 0) throw new Error(`Expected failure but command succeeded: ${command} ${args.join(" ")}`);

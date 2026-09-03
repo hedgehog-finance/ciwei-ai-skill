@@ -1,7 +1,7 @@
 {
   "name": "deliver_files",
   "license": "GPL-3.0",
-  "version": "2.1.0",
+  "version": "2.1.2",
   "private": true,
   "type": "module",
   "description": "Deliver downloadable workspace files through authenticated Gateway General MCP 2026-07-28 resource links.",

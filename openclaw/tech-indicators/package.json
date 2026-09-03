@@ -1,7 +1,7 @@
 {
   "name": "tech-indicators",
   "license": "GPL-3.0",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "private": true,
   "type": "module",
   "description": "Local technical indicator calculation engine",

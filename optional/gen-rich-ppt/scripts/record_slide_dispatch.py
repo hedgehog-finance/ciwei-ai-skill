@@ -9,6 +9,7 @@ from pathlib import Path
 from slide_run_state import (
     deck_dir_from_target,
     find_slide,
+    ensure_file,
     locked_jobs,
     now_iso,
     rel_to_deck,
@@ -19,6 +20,9 @@ from slide_run_state import (
 )
 
 
+MAX_PROMPT_BYTES = 10 * 1024 * 1024
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("deck", help="Deck directory or slide_jobs.json")
@@ -27,6 +31,12 @@ def main() -> int:
     parser.add_argument("--agent-nickname")
     parser.add_argument("--prompt-file", help="Prompt file path. Defaults to the job file in slide_jobs.json.")
     args = parser.parse_args()
+    if not args.agent_id.strip():
+        parser.error("--agent-id must not be empty")
+    if args.agent_nickname is not None and not args.agent_nickname.strip():
+        parser.error("--agent-nickname must not be empty")
+    if args.prompt_file is not None and not args.prompt_file.strip():
+        parser.error("--prompt-file must not be empty")
 
     deck_dir = deck_dir_from_target(args.deck)
     with locked_jobs(deck_dir) as jobs:
@@ -42,12 +52,11 @@ def main() -> int:
             prompt_path.relative_to(deck_dir)
         except ValueError as exc:
             raise SystemExit(f"Prompt file must live inside deck dir: {prompt_path}") from exc
-        if not prompt_path.exists():
-            raise SystemExit(f"Prompt file does not exist: {prompt_path}")
+        ensure_file(prompt_path, "prompt file", MAX_PROMPT_BYTES)
 
         slide["dispatch"] = {
-            "agent_id": args.agent_id,
-            "agent_nickname": args.agent_nickname,
+            "agent_id": args.agent_id.strip(),
+            "agent_nickname": args.agent_nickname.strip() if args.agent_nickname else None,
             "prompt": rel_to_deck(deck_dir, prompt_path),
             "prompt_sha256": sha256_file(prompt_path),
             "dispatched_at": now_iso(),

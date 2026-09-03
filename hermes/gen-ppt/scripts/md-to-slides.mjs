@@ -14,10 +14,12 @@
  *       Use gen-ppt.mjs for native .pptx output (default mode).
  */
 
-import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
-import { join, dirname, extname } from "node:path";
+import { readFileSync, writeFileSync, existsSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { basename, join, dirname, extname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { marked } from "marked";
 import hljs from "highlight.js";
+import { parseMarkdownSlidesArgs } from "./cli-args.mjs";
 
 // ─── Theme Definitions (matching gen-chart) ──────────────────────────────────
 
@@ -35,34 +37,78 @@ const THEMES = {
 };
 
 const THEME_NAMES = Object.keys(THEMES);
+const MAX_INPUT_BYTES = 100 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+const IMAGE_FETCH_TIMEOUT_MS = 30_000;
+
+async function readImageResponse(response) {
+  if (!response.body?.getReader) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > MAX_IMAGE_BYTES) throw new Error("image exceeds 50MB");
+    return buffer;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > MAX_IMAGE_BYTES) {
+      await reader.cancel();
+      throw new Error("image exceeds 50MB");
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
 
 // ─── CLI Args ────────────────────────────────────────────────────────────────
 
-const args = process.argv.slice(2);
-const positional = [];
-for (const a of args) {
-  if (!a.startsWith("--")) positional.push(a);
-}
-const inputPath = positional[0];
-const outputPath = positional[1];
-
-if (!inputPath || !outputPath) {
-  console.error('Usage: md-to-slides.mjs <input.md> <output.html> [--theme=<name>] [--title="Title"]');
+let parsedArgs;
+try {
+  parsedArgs = parseMarkdownSlidesArgs(process.argv.slice(2));
+} catch (error) {
+  console.error(`Error: ${error.message}`);
   process.exit(1);
 }
-
-const themeArg = args.find(a => a.startsWith("--theme="));
-const theme = themeArg ? themeArg.split("=")[1] : "fintech";
-const titleArg = args.find(a => a.startsWith("--title="));
-const customTitle = titleArg ? titleArg.slice("--title=".length).replace(/^["']|["']$/g, "") : null;
+const [inputPath, outputPath] = parsedArgs.positionals;
+const theme = parsedArgs.options.theme || "fintech";
+const customTitle = parsedArgs.options.title || null;
 
 if (theme === "list") {
+  if (parsedArgs.positionals.length > 0 || Object.keys(parsedArgs.options).length !== 1) {
+    console.error("Error: --theme=list cannot be combined with input, output, or other options");
+    process.exit(1);
+  }
   console.log("Available themes:");
   for (const [key, t] of Object.entries(THEMES)) {
     const label = key === "fintech" ? " (default)" : "";
     console.log(`  ${key.padEnd(12)} — ${t.bg === "#09090B" ? "🌙" : "☀️"}  bg:${t.bg} accent:${t.accent}${label}`);
   }
   process.exit(0);
+}
+
+if (parsedArgs.help || !inputPath || !outputPath) {
+  console.error('Usage: md-to-slides.mjs <input.md> <output.html> [--theme <name>] [--title "Title"]');
+  process.exit(parsedArgs.help ? 0 : 1);
+}
+if (resolve(inputPath) === resolve(outputPath)) {
+  console.error("Error: input and output paths must be different");
+  process.exit(1);
+}
+if (!outputPath.toLowerCase().endsWith(".html")) {
+  console.error("Error: output file must use a .html extension");
+  process.exit(1);
+}
+if (!existsSync(inputPath)) {
+  console.error(`Error: input file not found: ${inputPath}`);
+  process.exit(1);
+}
+const inputStat = statSync(inputPath);
+if (!inputStat.isFile() || inputStat.size > MAX_INPUT_BYTES) {
+  console.error("Error: input must be a regular Markdown file no larger than 100MB");
+  process.exit(1);
 }
 
 if (!THEMES[theme]) {
@@ -119,20 +165,36 @@ async function embedImage(src) {
     if (src.startsWith("data:")) return src;
 
     if (src.startsWith("http://") || src.startsWith("https://")) {
-      const resp = await fetch(src);
-      if (!resp.ok) { console.error(`Failed to fetch image: ${src} (${resp.status})`); return src; }
-      const ct = (resp.headers.get("content-type") || "").split(";")[0].trim();
-      const buffer = Buffer.from(await resp.arrayBuffer());
-      return `data:${ct || "image/png"};base64,${buffer.toString("base64")}`;
+      const sourceUrl = new URL(src);
+      if (sourceUrl.username || sourceUrl.password) throw new Error("image URL must not contain embedded credentials");
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
+      try {
+        const resp = await fetch(sourceUrl, { signal: controller.signal });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const finalUrl = new URL(resp.url);
+        if (!["http:", "https:"].includes(finalUrl.protocol) || finalUrl.username || finalUrl.password) {
+          throw new Error("redirected image URL is not a safe HTTP(S) URL");
+        }
+        const ct = (resp.headers.get("content-type") || "").split(";")[0].trim();
+        if (ct && !ct.startsWith("image/")) throw new Error(`unexpected content type ${ct}`);
+        const declaredLength = Number(resp.headers.get("content-length"));
+        if (Number.isFinite(declaredLength) && declaredLength > MAX_IMAGE_BYTES) throw new Error("image exceeds 50MB");
+        const buffer = await readImageResponse(resp);
+        return `data:${ct || "image/png"};base64,${buffer.toString("base64")}`;
+      } finally {
+        clearTimeout(timeout);
+      }
     }
 
     const localPath = src.startsWith("/") ? src : join(inputDir, src);
-    if (!existsSync(localPath)) { console.error(`Image not found: ${localPath}`); return src; }
+    if (!existsSync(localPath)) throw new Error(`image not found: ${localPath}`);
+    const imageStat = statSync(localPath);
+    if (!imageStat.isFile() || imageStat.size > MAX_IMAGE_BYTES) throw new Error("local image must be a regular file no larger than 50MB");
     const buffer = readFileSync(localPath);
     return `data:${getMimeFromExt(localPath)};base64,${buffer.toString("base64")}`;
   } catch (err) {
-    console.error(`Failed to embed image: ${src} (${err.message})`);
-    return src;
+    throw new Error(`Failed to embed image: ${src} (${err.message})`);
   }
 }
 
@@ -505,7 +567,7 @@ function buildEchartsScripts() {
 }
 
 // Logo is in the same directory as this script (gen-ppt/scripts/logo.png)
-const BRANDING_LOGO_SRC = `${new URL('./logo.png', import.meta.url).pathname}`;
+const BRANDING_LOGO_SRC = fileURLToPath(new URL('./logo.png', import.meta.url));
 
 // ─── Build HTML ──────────────────────────────────────────────────────────────
 
@@ -554,7 +616,14 @@ ${slidesHtml}
 </body>
 </html>`;
 
-  writeFileSync(outputPath, html, "utf-8");
+  const absoluteOutputPath = resolve(outputPath);
+  const tempOutputPath = join(dirname(absoluteOutputPath), `.${basename(absoluteOutputPath)}.${process.pid}.${Date.now()}.tmp`);
+  try {
+    writeFileSync(tempOutputPath, html, { encoding: "utf-8", flag: "wx" });
+    renameSync(tempOutputPath, absoluteOutputPath);
+  } finally {
+    try { unlinkSync(tempOutputPath); } catch { /* already renamed or never created */ }
+  }
 
   const size = statSync(outputPath).size;
   const sizeStr = size > 1024 * 1024

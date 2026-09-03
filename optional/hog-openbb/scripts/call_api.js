@@ -7,17 +7,18 @@
  * Call flow: loadConfig() -> ensureRunning() -> execute API request -> touchLastUsed() -> spawnWatchdog()
  *
  * Usage:
- *   node call_api.js --api <api-name> --params '<JSON-string>'
- *   node call_api.js --api <api-name> --params-file <params.json>
+ *   node call_api.js --api <api-name> [--key value ... | --params-file <tmp-*.json>]
  *
  * Examples:
- *   node call_api.js --api getMacroIndicators --params '{"symbol":"GDP","provider":"fred"}'
- *   node call_api.js --api getOptionChains  --params '{"symbol":"AAPL","provider":"polygon"}'
+ *   node call_api.js --api getMacroIndicators
+ *   node call_api.js --api getOptionChains --symbol AAPL
  */
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const { ensureRunning, touchLastUsed, spawnWatchdog, loadConfig, isPidAlive, readPidFile, PID_WATCHDOG_FILE } = require('./server_manager.js');
+const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
 
 // ─── API Route Mapping ─────────────────────────────────────────────────────────
 // Each route corresponds to an OpenBB Platform REST endpoint.
@@ -85,46 +86,87 @@ const API_ROUTES = {
 
 // ─── Argument Parsing ──────────────────────────────────────────────────────────
 
-function parseArgs(argv) {
-  const args = {};
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (!arg.startsWith('--')) continue;
-    const key = arg.slice(2);
-    const next = argv[i + 1];
-    if (!next || next.startsWith('--')) {
-      args[key] = true;
-    } else {
-      args[key] = next;
-      i++;
-    }
+const CONTROL_PARAMETER_NAMES = new Set(['api', 'params', 'params-file', 'dir', 'out', 'output']);
+const UNSUPPORTED_CONTROL_PARAMETERS = new Set(['dir', 'out', 'output']);
+const NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
+function parseScalar(raw, name) {
+  if (raw.trim() === '') throw new Error(`--${name} requires a non-empty value`);
+  if (/\r|\n/.test(raw)) throw new Error(`--${name} contains multiple lines; use --params-file <tmp-*.json>`);
+  if (raw === 'null' || /^[\[{]/.test(raw.trim())) {
+    throw new Error(`--${name} is not a flat scalar; use --params-file <tmp-*.json>`);
   }
-  return args;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  if (NUMBER_PATTERN.test(raw)) {
+    const number = Number(raw);
+    if (Number.isFinite(number)) return number;
+  }
+  return raw;
 }
 
-function readJsonParams(args) {
-  if (args.params === true) throw new Error('--params requires a JSON value');
-  if (args['params-file'] === true) throw new Error('--params-file requires a file path');
-  if (args.params !== undefined && args['params-file'] !== undefined) {
-    throw new Error('--params and --params-file are mutually exclusive');
+function parseArgs(argv) {
+  const controls = {};
+  const flatParams = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (!arg.startsWith('--')) throw new Error(`Unsupported positional argument: ${arg}`);
+
+    const equalAt = arg.indexOf('=');
+    const key = arg.slice(2, equalAt === -1 ? undefined : equalAt);
+    if (!key) throw new Error(`Invalid parameter name: ${arg}`);
+    const raw = equalAt === -1 ? argv[i + 1] : arg.slice(equalAt + 1);
+    if (equalAt === -1) {
+      if (raw === undefined || raw.startsWith('--')) throw new Error(`--${key} requires a value`);
+      i += 1;
+    }
+
+    if (raw.trim() === '') throw new Error(`--${key} requires a non-empty value`);
+    const target = CONTROL_PARAMETER_NAMES.has(key) ? controls : flatParams;
+    if (Object.prototype.hasOwnProperty.call(target, key)) throw new Error(`Duplicate parameter: --${key}`);
+    target[key] = CONTROL_PARAMETER_NAMES.has(key) ? raw : parseScalar(raw, key);
   }
-  if (args.params === undefined && args['params-file'] === undefined) return {};
+  return { controls, flatParams };
+}
+
+function parseJsonObject(raw, source) {
+  let value;
+  try {
+    value = JSON.parse(raw.replace(/^\uFEFF/, ''));
+  } catch (error) {
+    const advice = source === '--params'
+      ? '; use flat named parameters or write UTF-8 JSON to tmp-*.json and use --params-file'
+      : '';
+    throw new Error(`Invalid JSON from ${source}: ${error.message}${advice}`);
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${source} must contain a JSON object`);
+  }
+  return value;
+}
+
+function readJsonParams(args, flatParams) {
+  const sourceCount = [
+    Object.keys(flatParams).length > 0,
+    args.params !== undefined,
+    args['params-file'] !== undefined,
+  ].filter(Boolean).length;
+  if (sourceCount > 1) throw new Error('Flat parameters, --params-file, and --params are mutually exclusive');
+  if (args.params === undefined && args['params-file'] === undefined) return flatParams;
 
   let raw = args.params;
   let source = '--params';
   if (args['params-file'] !== undefined) {
     source = `--params-file ${args['params-file']}`;
     try {
+      const fileStat = fs.statSync(args['params-file']);
+      if (!fileStat.isFile() || fileStat.size > 10 * 1024 * 1024) throw new Error('parameter file must be a regular file no larger than 10MB');
       raw = fs.readFileSync(args['params-file'], 'utf8');
     } catch (error) {
       throw new Error(`Unable to read ${source}: ${error.message}`);
     }
   }
-  try {
-    return JSON.parse(raw.replace(/^\uFEFF/, ""));
-  } catch (error) {
-    throw new Error(`${source} is not valid JSON: ${error.message}`);
-  }
+  return parseJsonObject(raw, source);
 }
 
 // ─── HTTP Request ───────────────────────────────────────────────────────────────
@@ -146,26 +188,44 @@ function httpRequest(apiUrl, method, urlPath, params) {
     for (const [key, value] of Object.entries(params)) {
       if (value === undefined || value === null) continue;
       if (Array.isArray(value)) {
-        value.forEach((v) => url.searchParams.append(key, String(v)));
+        value.forEach((v) => {
+          const encoded = v !== null && typeof v === 'object' ? JSON.stringify(v) : String(v);
+          url.searchParams.append(key, encoded);
+        });
       } else if (typeof value === 'object') {
         url.searchParams.set(key, JSON.stringify(value));
       } else {
         url.searchParams.set(key, String(value));
       }
     }
+    if (url.toString().length > 65_536) {
+      reject(new Error('Request URL exceeds the 65536-character limit'));
+      return;
+    }
 
     const options = {
-      hostname: url.hostname,
-      port: url.port,
-      path: `${url.pathname}${url.search}`,
       method,
       headers: { 'Accept': 'application/json' },
       timeout: 30000,
     };
 
-    const req = http.request(options, (res) => {
+    const transport = url.protocol === 'https:' ? https : http;
+    const req = transport.request(url, options, (res) => {
       const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
+      let received = 0;
+      const declaredLength = Number(res.headers['content-length']);
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+        req.destroy(new Error(`Response exceeds ${MAX_RESPONSE_BYTES} bytes`));
+        return;
+      }
+      res.on('data', (chunk) => {
+        received += chunk.length;
+        if (received > MAX_RESPONSE_BYTES) {
+          req.destroy(new Error(`Response exceeds ${MAX_RESPONSE_BYTES} bytes`));
+          return;
+        }
+        chunks.push(chunk);
+      });
       res.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf-8');
         let body;
@@ -176,7 +236,7 @@ function httpRequest(apiUrl, method, urlPath, params) {
           return;
         }
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          const msg = typeof body === 'object' ? JSON.stringify(body) : String(body);
+          const msg = (typeof body === 'object' ? JSON.stringify(body) : String(body)).slice(0, 500);
           reject(new Error(`HTTP ${res.statusCode}: ${msg}`));
           return;
         }
@@ -255,14 +315,17 @@ async function callApi(apiName, params = {}) {
     if (fields && !Array.isArray(fields)) {
       throw new Error('Parameter fields must be a string array');
     }
-    if (Array.isArray(fields) && fields.some((f) => typeof f !== 'string')) {
+    if (Array.isArray(fields) && fields.some((f) => typeof f !== 'string' || !f.trim())) {
       throw new Error('Parameter fields must be a string array');
     }
   }
 
   // Validate required parameters
   for (const req of route.required) {
-    if (!requestParams[req]) {
+    if (!Object.prototype.hasOwnProperty.call(requestParams, req)
+      || requestParams[req] === null
+      || requestParams[req] === undefined
+      || (typeof requestParams[req] === 'string' && !requestParams[req].trim())) {
       throw new Error(`API ${apiName} missing required parameter: ${req}`);
     }
   }
@@ -287,7 +350,18 @@ async function callApi(apiName, params = {}) {
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv.length === 1 && ['-h', '--help'].includes(argv[0])) {
+    console.log(`Usage: node call_api.js --api <api-name> [--key value ... | --params-file <tmp-*.json>]\nAPIs: ${Object.keys(API_ROUTES).join(', ')}`);
+    return;
+  }
+  const { controls: args, flatParams } = parseArgs(argv);
+
+  for (const name of UNSUPPORTED_CONTROL_PARAMETERS) {
+    if (args[name] !== undefined) {
+      throw new Error(`--${name} is a reserved control parameter and is not supported by hog-openbb; use --params-file when the API payload needs a business field named ${name}`);
+    }
+  }
 
   if (!args.api) {
     const available = Object.keys(API_ROUTES)
@@ -297,7 +371,7 @@ async function main() {
     process.exit(1);
   }
 
-  const params = readJsonParams(args);
+  const params = readJsonParams(args, flatParams);
 
   const result = await callApi(args.api, params);
   console.log(JSON.stringify(result, null, 2));
@@ -310,4 +384,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { API_ROUTES, callApi };
+module.exports = { API_ROUTES, callApi, parseArgs, readJsonParams };

@@ -2,6 +2,8 @@
 
 Read this before full-deck image generation, preparing slide jobs, dispatching subagents, recording results, or handling blockers.
 
+In commands below, `{runtime_python}` means `~/.gen-rich-ppt/.venv/bin/python` on POSIX/Git Bash and `%USERPROFILE%\\.gen-rich-ppt\\.venv\\Scripts\\python.exe` in PowerShell.
+
 ## Final Slide Image Generation
 
 Generate one image per slide with the selected image backend. Every final `slide_XX.png` must be produced by the built-in image tool or by `scripts/image_gen.py`; programmatic rendering or hybrid text overlay is not acceptable for slide image creation.
@@ -19,7 +21,7 @@ Do not create these final downstream artifacts before outline approval. If the u
 Before full production, create structured per-slide image jobs. Prefer the bundled deterministic helper:
 
 ```bash
-~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/prepare_slide_prompts.py --spec {base_dir}/{deck_name}/deck_spec.json --out-dir {base_dir}/{deck_name} --selected-backend "<confirmed backend label>" --force
+{runtime_python} {skill_root}/scripts/prepare_slide_prompts.py --spec {base_dir}/{deck_name}/deck_spec.json --out-dir {base_dir}/{deck_name} --selected-backend "<confirmed backend label>" --force
 ```
 
 The helper writes:
@@ -158,21 +160,21 @@ Do not continue sequentially after the sample if subagents are part of the confi
 Dispatch loop:
 
 ```bash
-~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/slide_job_status.py {base_dir}/{deck_name}
+{runtime_python} {skill_root}/scripts/slide_job_status.py {base_dir}/{deck_name}
 
-~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/record_slide_dispatch.py {base_dir}/{deck_name} --slide slide_02 --agent-id <agent id> --agent-nickname "<nickname if available>" --prompt-file prompts/slide_02.json
+{runtime_python} {skill_root}/scripts/record_slide_dispatch.py {base_dir}/{deck_name} --slide slide_02 --agent-id <agent id> --agent-nickname "<nickname if available>" --prompt-file prompts/slide_02.json
 ```
 
 Result recording:
 
 ```bash
-~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/record_slide_result.py {base_dir}/{deck_name} --slide slide_02 --agent-id <agent id> --backend-used "built-in image tool" --selected-source /absolute/path/to/generated/slide_02.png --qa-note "Text readable; style matches the approved sample."
+{runtime_python} {skill_root}/scripts/record_slide_result.py {base_dir}/{deck_name} --slide slide_02 --agent-id <agent id> --backend-used "built-in image tool" --selected-source /absolute/path/to/generated/slide_02.png --qa-note "Text readable; style matches the approved sample."
 ```
 
 Blocker recording:
 
 ```bash
-~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/record_slide_blocker.py {base_dir}/{deck_name} --slide slide_02 --agent-id <agent id> --reason "selected image backend unavailable in worker"
+{runtime_python} {skill_root}/scripts/record_slide_blocker.py {base_dir}/{deck_name} --slide slide_02 --agent-id <agent id> --reason "selected image backend unavailable in worker"
 ```
 
 Subagent handoff template lives in `../prompts/slide-worker.md`. Use that template instead of writing a new ad hoc worker prompt.

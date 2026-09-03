@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -7,6 +7,31 @@ export const MCP_PROTOCOL_VERSION = "2026-07-28";
 export const MCP_TASKS_EXTENSION = "io.modelcontextprotocol/tasks";
 export const DEFAULT_MCP_URL = "http://127.0.0.1:59102/mcp";
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
+
+async function readResponseText(response) {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) throw new McpRequestError(`MCP response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+  if (!response.body?.getReader) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > MAX_RESPONSE_BYTES) throw new McpRequestError(`MCP response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+    return buffer.toString("utf8");
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new McpRequestError(`MCP response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 const MIN_POLL_INTERVAL_MS = 250;
 const MAX_POLL_INTERVAL_MS = 30000;
@@ -54,14 +79,20 @@ export async function resolveMcpUrl(override) {
     join(dirname(process.cwd()), "hogagent.json"),
   ];
   for (const configPath of candidates) {
-    let config;
     try {
-      config = JSON.parse(await readFile(configPath, "utf8"));
-    } catch {
-      // A missing or malformed optional config does not override later sources.
-      continue;
+      const configStat = await stat(configPath);
+      if (!configStat.isFile() || configStat.size > 1024 * 1024) {
+        throw new Error("configuration must be a regular file no larger than 1MB");
+      }
+      const config = JSON.parse((await readFile(configPath, "utf8")).replace(/^\uFEFF/, ""));
+      if (!config || typeof config !== "object" || Array.isArray(config)) {
+        throw new Error("configuration root must be a JSON object");
+      }
+      if (config?.gateway?.mcpGeneralUrl) return normalizeMcpUrl(config.gateway.mcpGeneralUrl);
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw new Error(`Unable to read MCP configuration ${configPath}: ${error.message}`);
     }
-    if (config?.gateway?.mcpGeneralUrl) return normalizeMcpUrl(config.gateway.mcpGeneralUrl);
   }
   return DEFAULT_MCP_URL;
 }
@@ -70,6 +101,9 @@ export function resolveMcpToken(override) {
   const token = override ?? process.env.HEDGEHOG_MCP_GENERAL_TOKEN;
   if (typeof token !== "string" || !token.trim()) {
     throw new Error("Missing MCP token; set HEDGEHOG_MCP_GENERAL_TOKEN or pass --token");
+  }
+  if (/[\r\n]/.test(token) || token.length > 8192) {
+    throw new Error("MCP token must be a single-line value no longer than 8192 characters");
   }
   return token.trim();
 }
@@ -104,6 +138,7 @@ export class GeneralMcpClient {
     try {
       const response = await fetch(this.url, {
         method: "POST",
+        redirect: "error",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
@@ -120,7 +155,7 @@ export class GeneralMcpClient {
         }),
         signal: controller.signal,
       });
-      const rawBody = await response.text();
+      const rawBody = await readResponseText(response);
       let body;
       try {
         body = JSON.parse(rawBody);
@@ -130,9 +165,12 @@ export class GeneralMcpClient {
           { status: response.status },
         );
       }
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        throw new McpRequestError("MCP response must be a JSON object", { status: response.status });
+      }
       if (body?.error) {
         throw new McpRequestError(
-          `MCP error ${body.error.code}: ${body.error.message || "unknown"}`,
+          `MCP error ${body.error.code}: ${String(body.error.message || "unknown").slice(0, 1000)}`,
           { code: body.error.code, data: body.error.data, status: response.status },
         );
       }

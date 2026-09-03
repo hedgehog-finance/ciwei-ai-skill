@@ -22,6 +22,10 @@ if (ext !== ".html" && ext !== ".htm") {
   log("error", `Unsupported file type "${ext}". Supported: .html, .htm`);
   process.exit(1);
 }
+if (![".md", ".markdown"].includes(extname(outputPath).toLowerCase())) {
+  log("error", "Output file must use a .md or .markdown extension");
+  process.exit(1);
+}
 
 log("info", `Converting HTML to Markdown: ${inputPath}`);
 

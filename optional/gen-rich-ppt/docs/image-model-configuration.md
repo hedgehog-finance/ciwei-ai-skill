@@ -99,10 +99,10 @@ Hermes 使用 Docker、SSH、Daytona、Modal 或 Singularity terminal 时，确�
 
 ### 共享运行时
 
-运行一次：
+运行一次。以下 `{bootstrap_python}` 表示 POSIX/Git Bash 的 `python3` 或 Windows PowerShell 的 `py -3`：
 
 ```bash
-python3 {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-image-api-key" --base-url "https://api.example.com/v1" --model "gpt-image-2"
+{bootstrap_python} {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-image-api-key" --base-url "https://api.example.com/v1" --model "gpt-image-2"
 ```
 
 配置写入 `${GEN_RICH_PPT_HOME:-~/.gen-rich-ppt}/.env`，权限设为 `0600`，供同一台机器上的 Codex、Claude Code、OpenClaw、Hermes 等 Agent 共用。
@@ -140,13 +140,13 @@ export GEN_RICH_PPT_IMAGE_MODEL="gpt-image-2"
 ### 官方 OpenAI
 
 ```bash
-python3 {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-openai-api-key" --clear-base-url --model "gpt-image-2"
+{bootstrap_python} {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-openai-api-key" --clear-base-url --model "gpt-image-2"
 ```
 
 ### OpenAI 兼容 Images API
 
 ```bash
-python3 {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-provider-api-key" --base-url "https://api.example.com/v1" --model "gpt-image-2"
+{bootstrap_python} {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-provider-api-key" --base-url "https://api.example.com/v1" --model "gpt-image-2"
 ```
 
 通常把 Base URL 配到供应商 `/v1` 根路径。不要填写 `/images/generations`、`/images/edits` 或其他终端路径；SDK 会自动追加图片接口路径。供应商必须实现本 skill 使用的 OpenAI Images API 请求和 base64 图片响应。
@@ -154,7 +154,7 @@ python3 {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-prov
 ### AtlasCloud
 
 ```bash
-python3 {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-atlascloud-api-key" --base-url "https://api.atlascloud.ai/api/v1/model" --model "openai/gpt-image-2"
+{bootstrap_python} {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-atlascloud-api-key" --base-url "https://api.atlascloud.ai/api/v1/model" --model "openai/gpt-image-2"
 ```
 
 使用基础模型名；适配器会根据 `generate` 或 `edit` 自动选择文生图或编辑路由。
@@ -168,7 +168,7 @@ python3 {skill_root}/scripts/gen_rich_ppt_runtime.py config --api-key "your-atla
 - 使用 `doctor` 查看有效配置来源并按需探测 API：
 
 ```bash
-python3 {skill_root}/scripts/gen_rich_ppt_runtime.py doctor --check-api
+{bootstrap_python} {skill_root}/scripts/gen_rich_ppt_runtime.py doctor --check-api
 ```
 
 命令行 `--model` 只覆盖当前调用，不改写持久配置。

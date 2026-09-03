@@ -1,6 +1,6 @@
 ---
 name: hog-gateway-tools
-version: 3.5.0
+version: 3.5.2
 description: >
     Call authenticated Hedgehog Gateway General MCP capabilities, including
     workflow reporting, restricted workspace file delivery, Work context and Task status, knowledge-base retrieval,
@@ -13,9 +13,20 @@ description: >
 # Gateway General MCP Tools
 
 
-## Windows command compatibility
+## Portable CLI parameters
 
-On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+When a documented CLI accepts a parameter object, use the same rule on every Agent and operating system; existing positional file inputs remain positional:
+
+1. When every business value is a non-empty, single-line `string | finite number | boolean`, pass it as a named argument (`--key value` or `--key=value`). Names are case-sensitive and are not normalized.
+2. When any value is an object, array, `null`, multiline text, a numeric/boolean-looking string that must remain a string, or contains difficult quoting, write the complete parameter object as UTF-8 JSON and pass the file option documented by this Skill.
+3. Agent-created parameter files must have a unique basename matching `tmp-<skill-name>-<unique-id>.json`, must not use the reserved `.hedgehog/` directory, and must be removed after the call when no longer needed. UTF-8 BOM is accepted.
+4. Do not inline nested JSON or combine flat arguments with a JSON/file payload. Create JSON with the Agent's file-writing capability, not `echo`, a shell heredoc, or PowerShell string assembly.
+
+POSIX/Git Bash form: `node '<script>' --key 'single-line value'` or `node '<script>' <file-option> '<workspace>/tmp-<skill-name>-<id>.json'`.
+
+PowerShell form: `node "<script>" --key "single-line value"` or `node "<script>" <file-option> "<workspace>\\tmp-<skill-name>-<id>.json"`.
+
+On Windows, use PowerShell or a verified Git for Windows Bash; `cmd.exe` is unsupported. Keep each command on one physical line. The process runs with the current Agent user's permissions and that Agent's native sandbox; HogAgent marks its Windows shell as `UNSANDBOXED`.
 
 Use this Skill to call the Gateway General MCP `2026-07-28` endpoint. The CLI supplies the required modern MCP headers and `_meta` envelope, preserves structured results and Resource Links, and handles the `io.modelcontextprotocol/tasks` lifecycle.
 
@@ -75,12 +86,10 @@ Use `--help` for the complete CLI syntax.
 ### Common calls
 
 ```bash
-node <skill_path>/cli.mjs report-task-result task-123 --content "Task output" --summary "Summary" --delivery-files-json '[{"name":"report.pdf","path":"tasks/task-123/report.pdf","summary":"Report"}]'
-node <skill_path>/cli.mjs report-task-result task-123 --content "Task output" --delivery-files-json-file <delivery-files.json>
+node <skill_path>/cli.mjs report-task-result task-123 --content "Task output" --delivery-files-json-file '<workspace>/tmp-hog-gateway-tools-<id>.json'
 
 node <skill_path>/cli.mjs deliver-files tasks/task-123/report.pdf tasks/task-123/chart.png --summary "Analysis artifacts" --task-id task-123
-node <skill_path>/cli.mjs deliver-files --files-json '[{"path":"tasks/task-123/report.pdf","summary":"Report"}]' --task-id task-123
-node <skill_path>/cli.mjs deliver-files --files-json-file <files.json> --task-id task-123
+node <skill_path>/cli.mjs deliver-files --files-json-file '<workspace>/tmp-hog-gateway-tools-<id>.json' --task-id task-123
 
 node <skill_path>/cli.mjs get-work-context work-123 --task-id task-123
 node <skill_path>/cli.mjs get-task-status task-123
@@ -104,8 +113,8 @@ User identity always comes from the authenticated MCP principal. Do not pass or 
 
 ## File delivery rules
 
-- `deliver-files` accepts exactly one file-input form: positional paths, an inline non-empty `--files-json` array, or `--files-json-file` pointing to that array in a UTF-8 JSON file. `--task-id` associates the delivery with an existing workflow Task.
-- `report-task-result` accepts delivery metadata through either inline `--delivery-files-json` or UTF-8 `--delivery-files-json-file`; do not combine them.
+- `deliver-files` accepts positional paths or `--files-json-file` pointing to a non-empty UTF-8 JSON array. Agent calls must use the file form for structured metadata; the legacy inline `--files-json` form is manual-only. `--task-id` associates the delivery with an existing workflow Task.
+- `report-task-result` accepts structured delivery metadata through UTF-8 `--delivery-files-json-file`. The legacy inline `--delivery-files-json` form is manual-only; do not combine the two forms.
 - Deliver only files that already exist inside the current Agent workspace. Gateway rejects missing files, non-files, workspace escapes, symlinks outside the workspace, and `.hedgehog/` paths. The command never creates, edits, moves, or deletes a file.
 - MCP Resource projection is limited to 64 MiB per file. Use an existing HTTP/Relay streaming path for larger artifacts.
 - The output retains both the structured `delivered`/`errors` result and a `resource_links` array. A non-empty `errors` array is a partial failure: report the failed files even when other files were delivered.
@@ -136,3 +145,5 @@ If two consecutive calls fail because of connection errors, timeouts, HTTP 404, 
 Treat invalid arguments and missing permissions as their reported errors rather than service availability failures, and do not retry unchanged input. After an ambiguous network failure on `memory-save`, `memory-update`, or `deliver-files`, do not blindly repeat the mutation; verify the result before any user-authorized follow-up.
 
 Use `deliver-files` for standalone delivery. `report-task-result` may instead attach validated workspace files as part of a workflow result.
+
+JSON payload files and discovered configuration files are limited to 10 MiB and 1 MiB respectively; MCP responses are limited to 20 MiB. Authenticated requests reject redirects, malformed JSON-RPC responses, multiline/oversized tokens, and ambiguous payload-source combinations.

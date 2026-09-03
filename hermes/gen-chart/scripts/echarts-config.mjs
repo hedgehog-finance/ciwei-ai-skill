@@ -8,7 +8,7 @@
  * BriefingChart component).
  *
  * Usage:
- *   node echarts-config.mjs --spec <chart-def.json> [--theme=<name>] [--width=<n>] [--height=<n>]
+ *   node echarts-config.mjs --spec <tmp-gen-chart-*.json> [--theme=<name>] [--width=<n>] [--height=<n>]
  *
  * Options:
  *   --spec <file>         Input chart definition JSON file (BriefingChartData format)
@@ -27,8 +27,9 @@
  *      will process it and apply frontend-specific styling
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { resolveTheme, isDark, THEME_NAMES } from "./themes.mjs";
+import { parseEchartsArgs, positiveInteger } from "./cli-args.mjs";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -60,31 +61,30 @@ const warnings = [];
 
 // ─── Argument Parsing ───────────────────────────────────────────────────────
 
-const args = process.argv.slice(2);
-
-let specPath, themeName, widthArg, heightArg;
-
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === "--spec") {
-    specPath = args[++i];
-  } else if (args[i].startsWith("--spec=")) {
-    specPath = args[i].substring("--spec=".length);
-  } else if (args[i].startsWith("--theme=")) {
-    themeName = args[i].substring("--theme=".length);
-  } else if (args[i].startsWith("--width=")) {
-    widthArg = parseInt(args[i].substring("--width=".length), 10);
-  } else if (args[i].startsWith("--height=")) {
-    heightArg = parseInt(args[i].substring("--height=".length), 10);
-  } else if (!specPath) {
-    specPath = args[i];
-  }
+let parsedArgs;
+try {
+  parsedArgs = parseEchartsArgs(process.argv.slice(2));
+} catch (error) {
+  console.error(`Error: ${error.message}`);
+  process.exit(1);
 }
-
-const width = (Number.isFinite(widthArg) && widthArg > 0) ? widthArg : DEFAULT_WIDTH;
-const height = (Number.isFinite(heightArg) && heightArg > 0) ? heightArg : DEFAULT_HEIGHT;
+const { spec: specPath, theme: themeName } = parsedArgs.options;
+let width;
+let height;
+try {
+  width = positiveInteger(parsedArgs.options.width, "width", DEFAULT_WIDTH);
+  height = positiveInteger(parsedArgs.options.height, "height", DEFAULT_HEIGHT);
+} catch (error) {
+  console.error(`Error: ${error.message}`);
+  process.exit(1);
+}
 
 // --theme=list: print available themes and exit
 if (themeName === "list") {
+  if (parsedArgs.positionals.length > 0 || Object.keys(parsedArgs.options).length !== 1) {
+    console.error("Error: --theme=list cannot be combined with input or other options");
+    process.exit(1);
+  }
   console.error("Available financial color themes:\n");
   for (const key of THEME_NAMES) {
     const t = resolveTheme(key);
@@ -93,21 +93,23 @@ if (themeName === "list") {
   process.exit(0);
 }
 
-if (!specPath) {
-  console.error("Usage: echarts-config.mjs --spec <chart-def.json> [--theme=<name>] [--width=<n>] [--height=<n>]");
+if (parsedArgs.help || !specPath) {
+  console.error("Usage: echarts-config.mjs --spec <tmp-gen-chart-*.json> [--theme=<name>] [--width=<n>] [--height=<n>]");
   console.error("  --theme:   built-in financial theme (fintech, bloomberg, oldmoney, ...) or 'list' to show all");
   console.error("  --width:   chart width in pixels (default: 800)");
   console.error("  --height:  chart height in pixels (default: 450)");
   console.error("  Output: { chart, option } JSON to stdout — no files generated");
-  process.exit(1);
+  process.exit(parsedArgs.help ? 0 : 1);
 }
 
 // ─── Read & Parse Chart Definition ──────────────────────────────────────────
 
 let chartDef;
 try {
+  const specStat = statSync(specPath);
+  if (!specStat.isFile() || specStat.size > 100 * 1024 * 1024) throw new Error("spec must be a regular file no larger than 100MB");
   const raw = readFileSync(specPath, "utf-8");
-  chartDef = JSON.parse(raw);
+  chartDef = JSON.parse(raw.replace(/^\uFEFF/, ""));
 } catch (err) {
   console.error(`Error: Failed to read/parse spec file "${specPath}": ${err.message}`);
   process.exit(1);

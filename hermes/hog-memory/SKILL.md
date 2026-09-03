@@ -1,6 +1,6 @@
 ---
 name: hog-memory
-version: 1.3.0
+version: 1.3.2
 description: >
     Cross-session persistent memory. Save market insights, research conclusions,
     portfolio changes and quant strategies; search, update, delete and recall
@@ -13,9 +13,20 @@ prerequisites:
 # 跨会话持久记忆
 
 
-## Windows command compatibility
+## Portable CLI parameters
 
-On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+When a documented CLI accepts a parameter object, use the same rule on every Agent and operating system; existing positional file inputs remain positional:
+
+1. When every business value is a non-empty, single-line `string | finite number | boolean`, pass it as a named argument (`--key value` or `--key=value`). Names are case-sensitive and are not normalized.
+2. When any value is an object, array, `null`, multiline text, a numeric/boolean-looking string that must remain a string, or contains difficult quoting, write the complete parameter object as UTF-8 JSON and pass the file option documented by this Skill.
+3. Agent-created parameter files must have a unique basename matching `tmp-<skill-name>-<unique-id>.json`, must not use the reserved `.hedgehog/` directory, and must be removed after the call when no longer needed. UTF-8 BOM is accepted.
+4. Do not inline nested JSON or combine flat arguments with a JSON/file payload. Create JSON with the Agent's file-writing capability, not `echo`, a shell heredoc, or PowerShell string assembly.
+
+POSIX/Git Bash form: `node '<script>' --key 'single-line value'` or `node '<script>' <file-option> '<workspace>/tmp-<skill-name>-<id>.json'`.
+
+PowerShell form: `node "<script>" --key "single-line value"` or `node "<script>" <file-option> "<workspace>\\tmp-<skill-name>-<id>.json"`.
+
+On Windows, use PowerShell or a verified Git for Windows Bash; `cmd.exe` is unsupported. Keep each command on one physical line. The process runs with the current Agent user's permissions and that Agent's native sandbox; HogAgent marks its Windows shell as `UNSANDBOXED`.
 
 提供金融投研 Agent 的长期记忆能力：保存、搜索、更新、删除、召回过去会话中的市场洞察、研究结论、持仓变动和量化策略。所有记忆通过 Gateway KB MCP Server 持久化存储，跨会话可用。
 
@@ -245,3 +256,4 @@ node ${HERMES_SKILL_DIR}/cli.mjs delete abc123
 - MCP 请求超时 15 秒，超时返回错误而非挂起。
 - 所有命令在失败时输出错误信息到 stderr 并以非零退出码退出：`Error: MCP request failed: <reason>`
 - 记忆存储为当前 `userId`（默认 `default`），不同 userId 之间互相不可见。
+- 配置文件最大 1 MiB，MCP 响应最大 20 MiB；重定向、损坏配置、缺少 JSON-RPC `result` 和过大的错误消息均会被拒绝。

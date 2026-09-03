@@ -22,6 +22,10 @@ def main() -> int:
     parser.add_argument("--reason", required=True)
     parser.add_argument("--agent-id")
     args = parser.parse_args()
+    if not args.reason.strip():
+        parser.error("--reason must not be empty")
+    if args.agent_id is not None and not args.agent_id.strip():
+        parser.error("--agent-id must not be empty")
 
     deck_dir = deck_dir_from_target(args.deck)
     with locked_jobs(deck_dir) as jobs:
@@ -29,15 +33,15 @@ def main() -> int:
         if slide.get("status") in {"recorded", "accepted"}:
             raise SystemExit(f"{slide['slide_id']} is already complete; refusing to mark it blocked.")
         slide["blocker"] = {
-            "agent_id": args.agent_id,
-            "reason": args.reason,
+            "agent_id": args.agent_id.strip() if args.agent_id else None,
+            "reason": args.reason.strip(),
             "blocked_at": now_iso(),
         }
         slide["status"] = "blocked"
         update_jobs_run_status(jobs)
         jobs["run_status"] = "blocked"
         slide_id = slide["slide_id"]
-    set_run_status(deck_dir, "blocked", f"{slide_id}: {args.reason}")
+    set_run_status(deck_dir, "blocked", f"{slide_id}: {args.reason.strip()}")
     print(f"{slide_id} -> blocked")
     return 0
 

@@ -98,10 +98,10 @@ Use headings that the assembly script can map back to slide numbers:
 
 ## Assembly
 
-Before running `scripts/assemble_ppt.py` or the CLI/API fallback scripts, make sure the shared runtime exists. If `~/.gen-rich-ppt/.venv/bin/python` is missing, or if importing script dependencies fails, create or refresh the environment:
+Before running `scripts/assemble_ppt.py` or the CLI/API fallback scripts, make sure the shared runtime exists. In commands below, `{runtime_python}` means `~/.gen-rich-ppt/.venv/bin/python` on POSIX/Git Bash and `%USERPROFILE%\\.gen-rich-ppt\\.venv\\Scripts\\python.exe` in PowerShell; `{bootstrap_python}` means `python3` on POSIX/Git Bash or `py -3` in Windows PowerShell. If the runtime interpreter is missing, or if importing script dependencies fails, create or refresh the environment:
 
 ```bash
-python3 {skill_root}/scripts/gen_rich_ppt_runtime.py bootstrap
+{bootstrap_python} {skill_root}/scripts/gen_rich_ppt_runtime.py bootstrap
 ```
 
 This is an internal setup step for the skill. Do not ask the user to run these commands unless dependency installation fails and user approval or troubleshooting is required.
@@ -109,7 +109,7 @@ This is an internal setup step for the skill. Do not ask the user to run these c
 Run:
 
 ```bash
-~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/assemble_ppt.py {base_dir} {deck_name}.pptx --aspect-ratio 16:9
+{runtime_python} {skill_root}/scripts/assemble_ppt.py {base_dir} {deck_name}.pptx --aspect-ratio 16:9
 ```
 
 Important:
@@ -122,7 +122,7 @@ Important:
 - If `{base_dir}/{deck_name}/speech.md` exists and uses `Slide N` headings, the script writes those notes into the corresponding PPT speaker notes.
 - The script writes `{base_dir}/{deck_name}/{deck_name}.pptx`.
 
-`assemble_ppt.py` supports `16:9` and `4:3`. Use `16:9` unless the user requests otherwise. `image_gen.py` automatically resolves HogAgent skill config, skill-specific variables, standard OpenAI variables, and `~/.gen-rich-ppt/.env`. Run `python3 {skill_root}/scripts/gen_rich_ppt_runtime.py doctor --check-api` when troubleshooting API access.
+`assemble_ppt.py` supports `16:9` and `4:3`. Use `16:9` unless the user requests otherwise. `image_gen.py` automatically resolves HogAgent skill config, skill-specific variables, standard OpenAI variables, and `~/.gen-rich-ppt/.env`. Run `{bootstrap_python} {skill_root}/scripts/gen_rich_ppt_runtime.py doctor --check-api` when troubleshooting API access.
 
 ## Final Report
 

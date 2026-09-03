@@ -3,15 +3,26 @@ name: gen-chart
 description: >
     Generate charts as PNG/SVG (Vega-Lite v6, Mermaid) or ECharts JSON configurations. You MUST select either “Image Mode” or “ECharts Mode” before generating data.
     Triggers: chart, diagram, graph, flowchart, sequence diagram, mermaid, vega, echarts.
-version: 2.4.0
+version: 2.4.2
 ---
 
 # GenChart — Chart & Diagram Generator
 
 
-## Windows command compatibility
+## Portable CLI parameters
 
-On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+When a documented CLI accepts a parameter object, use the same rule on every Agent and operating system; existing positional file inputs remain positional:
+
+1. When every business value is a non-empty, single-line `string | finite number | boolean`, pass it as a named argument (`--key value` or `--key=value`). Names are case-sensitive and are not normalized.
+2. When any value is an object, array, `null`, multiline text, a numeric/boolean-looking string that must remain a string, or contains difficult quoting, write the complete parameter object as UTF-8 JSON and pass the file option documented by this Skill.
+3. Agent-created parameter files must have a unique basename matching `tmp-<skill-name>-<unique-id>.json`, must not use the reserved `.hedgehog/` directory, and must be removed after the call when no longer needed. UTF-8 BOM is accepted.
+4. Do not inline nested JSON or combine flat arguments with a JSON/file payload. Create JSON with the Agent's file-writing capability, not `echo`, a shell heredoc, or PowerShell string assembly.
+
+POSIX/Git Bash form: `node '<script>' --key 'single-line value'` or `node '<script>' <file-option> '<workspace>/tmp-<skill-name>-<id>.json'`.
+
+PowerShell form: `node "<script>" --key "single-line value"` or `node "<script>" <file-option> "<workspace>\\tmp-<skill-name>-<id>.json"`.
+
+On Windows, use PowerShell or a verified Git for Windows Bash; `cmd.exe` is unsupported. Keep each command on one physical line. The process runs with the current Agent user's permissions and that Agent's native sandbox; HogAgent marks its Windows shell as `UNSANDBOXED`.
 
 Generate charts (Vega-Lite v6) and diagrams (Mermaid) as PNG/SVG images, or ECharts JSON configs.
 Two usage scenarios: **Standalone Generation** and **In-text Embedding**.
@@ -32,7 +43,7 @@ Target modes must be declared prior to data generation. Mixing protocols is stri
 
 ### vega-chart.mjs — Vega-Lite v6 data charts (line, bar, pie, scatter, etc.)
 ```bash
-node ./scripts/vega-chart.mjs --spec <spec.json> --output <output.png|svg> [--theme=<name>]
+node ./scripts/vega-chart.mjs --spec <workspace>/tmp-gen-chart-<id>.json --output <output.png|svg> [--theme=<name>]
 ```
 
 ### mermaid-chart.mjs — Diagrams (flowchart, sequence, class, etc.)
@@ -42,7 +53,7 @@ node ./scripts/mermaid-chart.mjs --spec <input.mmd> --output <output.png|svg> [-
 
 ### echarts-config.mjs — ECharts config (JSON output, no files)
 ```bash
-node ./scripts/echarts-config.mjs --spec <chart-def.json> [--theme=<name>] [--width=<n>] [--height=<n>]
+node ./scripts/echarts-config.mjs --spec <workspace>/tmp-gen-chart-<id>.json [--theme=<name>] [--width=<n>] [--height=<n>]
 ```
 Outputs `{ chart, option }` JSON to **stdout**. No files generated.
 
@@ -71,7 +82,7 @@ Single chart output, no surrounding text.
 
 **ECharts Mode (opt-in, user must explicitly request):**
 1. Write chart def JSON: `{ "chart": "<type>", "option": { ... } }`
-2. Run: `node <skill_dir>/scripts/echarts-config.mjs --spec <chart-def.json> [--theme=<name>]`
+2. Run: `node <skill_dir>/scripts/echarts-config.mjs --spec <workspace>/tmp-gen-chart-<id>.json [--theme=<name>]`
 3. Deliver the stdout JSON text directly (no files generated).
 
 ---
@@ -159,3 +170,7 @@ PNG rendering pipeline: `vega-chart.mjs` renders SVG first (`view.toSVG()`) then
 Vega-Lite specs should use the v6 schema when `$schema` is included: `https://vega.github.io/schema/vega-lite/v6.json`.
 
 ECharts is NOT a Node.js dependency — frontend loads ECharts 5.5.1 from CDN.
+
+## Execution safety
+
+Chart specs and local Vega data files are limited to 100 MiB; Mermaid inputs are limited to 10 MiB. Vega rejects more than 1,000,000 inline rows, dimensions above 8192 px, render areas above 25,000,000 pixels, URI data sources, and output-format/extension mismatches. Mermaid runs with an argument array, no shell, and a 120-second timeout. File renderers validate a non-empty temporary result before atomically replacing the requested output.

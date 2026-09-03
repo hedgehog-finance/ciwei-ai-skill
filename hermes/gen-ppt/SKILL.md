@@ -2,7 +2,7 @@
 name: gen-ppt
 description: >
     Generate presentations as editable PPTX from JSON (default) or self-contained HTML slides from Markdown when explicitly requested. Keep text, shapes, and tables editable; use native charts only for PowerPoint targets and PNG charts for Keynote/universal targets. Use for slide decks, pitch decks, meeting presentations, PowerPoint/PPTX, HTML/web slides, Markdown-to-slides, and interactive browser presentations. Does not create .key files, Google Slides-only exports, or video.
-version: 2.4.0
+version: 2.4.2
 compatibility: Requires Node.js >=18 in the Hermes terminal runtime.
 prerequisites:
   commands: [node, npm]
@@ -11,9 +11,20 @@ prerequisites:
 # GenPPT — Presentation Generator
 
 
-## Windows command compatibility
+## Portable CLI parameters
 
-On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+When a documented CLI accepts a parameter object, use the same rule on every Agent and operating system; existing positional file inputs remain positional:
+
+1. When every business value is a non-empty, single-line `string | finite number | boolean`, pass it as a named argument (`--key value` or `--key=value`). Names are case-sensitive and are not normalized.
+2. When any value is an object, array, `null`, multiline text, a numeric/boolean-looking string that must remain a string, or contains difficult quoting, write the complete parameter object as UTF-8 JSON and pass the file option documented by this Skill.
+3. Agent-created parameter files must have a unique basename matching `tmp-<skill-name>-<unique-id>.json`, must not use the reserved `.hedgehog/` directory, and must be removed after the call when no longer needed. UTF-8 BOM is accepted.
+4. Do not inline nested JSON or combine flat arguments with a JSON/file payload. Create JSON with the Agent's file-writing capability, not `echo`, a shell heredoc, or PowerShell string assembly.
+
+POSIX/Git Bash form: `node '<script>' --key 'single-line value'` or `node '<script>' <file-option> '<workspace>/tmp-<skill-name>-<id>.json'`.
+
+PowerShell form: `node "<script>" --key "single-line value"` or `node "<script>" <file-option> "<workspace>\\tmp-<skill-name>-<id>.json"`.
+
+On Windows, use PowerShell or a verified Git for Windows Bash; `cmd.exe` is unsupported. Keep each command on one physical line. The process runs with the current Agent user's permissions and that Agent's native sandbox; HogAgent marks its Windows shell as `UNSANDBOXED`.
 
 ## Choose the output
 
@@ -33,7 +44,7 @@ Resolve `${HERMES_SKILL_DIR}/scripts/*` relative to this SKILL.md and use absolu
 3. Generate with the matching target:
 
 ```bash
-node ${HERMES_SKILL_DIR}/scripts/gen-ppt.mjs <config.json> <output.pptx> [--theme=<name>] [--target=powerpoint|keynote|universal]
+node ${HERMES_SKILL_DIR}/scripts/gen-ppt.mjs <workspace>/tmp-gen-ppt-<id>.json <output.pptx> [--theme=<name>] [--target=powerpoint|keynote|universal]
 ```
 
 4. Validate structurally and in every available target viewer:
@@ -86,7 +97,7 @@ node ${HERMES_SKILL_DIR}/scripts/md-to-slides.mjs <input.md> <output.html> [--th
 ```
 
 - Use `#` for the title slide and `##`/`###` headings thereafter; typically create 10–20 slides with 3–6 bullets each.
-- Images from absolute local paths or URLs are embedded as base64; never leave external references. SVG is acceptable only in HTML mode.
+- Images from absolute local paths or URLs are embedded as base64; never leave external references. File and inline-base64 image payloads are validated and limited to 50 MiB decoded; SVG is acceptable only in HTML mode.
 - Put ECharts option JSON in a fenced `echarts` block so the runtime renders it; do not paste it as plain text.
 - Output includes keyboard/touch navigation, fullscreen (`F`), overview (`O`), and Home/End support.
 
@@ -115,3 +126,7 @@ npm run test:native-charts -- --libreoffice
 ```
 
 Add `--keynote` and/or `--powerpoint` wherever installed. These tests must keep documented examples, package/notes integrity, all native chart types, Keynote-safe rendering, and Keynote native-chart rejection covered.
+
+## Execution safety
+
+Native-PPT configuration and Markdown inputs are limited to 100 MiB and embedded images to 50 MiB. Output extensions are strict. PPTX packages are normalized and structurally validated in memory, while PPTX and HTML outputs replace the target atomically only after successful generation. Viewer validation subprocesses always receive an argument array, never a shell command, and have bounded timeouts.

@@ -13,27 +13,60 @@
 //   delete <id>                    Delete a memory entry
 //   list [options]                 List memory entries
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+
+const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
+
+function normalizeMcpUrl(rawValue, source) {
+  if (typeof rawValue !== "string" || !rawValue.trim()) {
+    throw new Error(`${source} must be a non-empty HTTP(S) URL`);
+  }
+  let parsed;
+  try {
+    parsed = new URL(rawValue.trim());
+  } catch {
+    throw new Error(`${source} is not a valid URL`);
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`${source} must use http:// or https://`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error(`${source} must not contain embedded credentials`);
+  }
+  if (parsed.hash) throw new Error(`${source} must not contain a URL fragment`);
+  return parsed.toString();
+}
 
 // ---------------------------------------------------------------------------
 // MCP endpoint discovery. Priority: --url > HEDGEHOG_MCP_KB_URL > hogagent.json
 // ---------------------------------------------------------------------------
 
 async function resolveMcpUrl(override) {
-  if (override) return override;
-  if (process.env.HEDGEHOG_MCP_KB_URL) return process.env.HEDGEHOG_MCP_KB_URL;
+  if (override) return normalizeMcpUrl(override, "--url");
+  if (process.env.HEDGEHOG_MCP_KB_URL) {
+    return normalizeMcpUrl(process.env.HEDGEHOG_MCP_KB_URL, "HEDGEHOG_MCP_KB_URL");
+  }
   const candidates = [
     join(homedir(), ".hogagent", "hogagent.json"),
     join(dirname(process.cwd()), "hogagent.json"),
   ];
   for (const cfg of candidates) {
     try {
-      const j = JSON.parse(await readFile(cfg, "utf8"));
-      if (j?.memory?.mcpKbUrl) return j.memory.mcpKbUrl;
-    } catch {
-      // ignore
+      const configStat = await stat(cfg);
+      if (!configStat.isFile() || configStat.size > 1024 * 1024) {
+        throw new Error("configuration must be a regular file no larger than 1MB");
+      }
+      const text = (await readFile(cfg, "utf8")).replace(/^\uFEFF/, "");
+      const j = JSON.parse(text);
+      if (!j || typeof j !== "object" || Array.isArray(j)) throw new Error("configuration root must be a JSON object");
+      if (j?.memory?.mcpKbUrl) {
+        return normalizeMcpUrl(j.memory.mcpKbUrl, `${cfg}: memory.mcpKbUrl`);
+      }
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw new Error(`Unable to read MCP configuration ${cfg}: ${error.message}`);
     }
   }
   return null;
@@ -43,12 +76,38 @@ async function resolveMcpUrl(override) {
 // MCP JSON-RPC caller with bounded timeout.
 // ---------------------------------------------------------------------------
 
+async function readResponseText(response, maximumBytes) {
+  if (!response.body?.getReader) {
+    const buffer = new Uint8Array(await response.arrayBuffer());
+    if (buffer.byteLength > maximumBytes) {
+      throw new Error(`MCP response exceeds ${maximumBytes} bytes`);
+    }
+    return new TextDecoder().decode(buffer);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maximumBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`MCP response exceeds ${maximumBytes} bytes`);
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
 async function callMcp(url, toolName, args) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
     const resp = await fetch(url, {
       method: "POST",
+      redirect: "error",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -58,14 +117,26 @@ async function callMcp(url, toolName, args) {
       }),
       signal: controller.signal,
     });
+    const bodyText = await readResponseText(resp, MAX_RESPONSE_BYTES);
     if (!resp.ok) {
-      const bodyText = await resp.text().catch(() => "");
       throw new Error(`MCP HTTP error ${resp.status} ${resp.statusText}: ${bodyText.slice(0, 200)}`);
     }
-    const body = await resp.json();
-    if (body.error) {
-      throw new Error(`MCP error ${body.error.code}: ${body.error.message || "unknown"}`);
+    let body;
+    try {
+      body = JSON.parse(bodyText);
+    } catch {
+      throw new Error("MCP endpoint returned invalid JSON");
     }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new Error("MCP endpoint returned an invalid JSON-RPC response");
+    }
+    if (body.error) {
+      throw new Error(`MCP error ${body.error.code}: ${String(body.error.message || "unknown").slice(0, 1000)}`);
+    }
+    if (body.result?.isError) {
+      throw new Error(`MCP tool error: ${extractText(body.result) || "unknown"}`);
+    }
+    if (!Object.hasOwn(body, "result")) throw new Error("MCP response is missing result");
     return body.result;
   } finally {
     clearTimeout(timer);
@@ -84,35 +155,80 @@ function extractText(result) {
 // Argument parsing helpers.
 // ---------------------------------------------------------------------------
 
-function parseFlags(argv) {
-  // Supports two forms:
-  //   --key value    (space-separated; next token treated as value if not a flag)
-  //   --key=value    (equals-separated; value may itself start with "--")
-  // Boolean flags are represented as `true` when no value follows.
+function parseCommandArgs(argv, { valueOptions = [], booleanOptions = [] }) {
+  const values = new Set(valueOptions);
+  const booleans = new Set(booleanOptions);
   const flags = {};
+  const positionals = [];
+  const assign = (name, value) => {
+    if (Object.prototype.hasOwnProperty.call(flags, name)) throw new Error(`Duplicate option: --${name}`);
+    flags[name] = value;
+  };
+
   for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (!a.startsWith("--")) continue;
-    const eq = a.indexOf("=");
-    if (eq !== -1) {
-      // --key=value form
-      flags[a.slice(2, eq)] = a.slice(eq + 1);
+    const argument = argv[i];
+    if (!argument.startsWith("--")) {
+      positionals.push(argument);
       continue;
     }
-    const key = a.slice(2);
-    const val = argv[i + 1];
-    if (val !== undefined && !val.startsWith("--")) {
-      flags[key] = val;
-      i++;
-    } else {
-      flags[key] = true;
+    const equalAt = argument.indexOf("=");
+    const name = argument.slice(2, equalAt === -1 ? undefined : equalAt);
+    if (!values.has(name) && !booleans.has(name)) throw new Error(`Unknown option: --${name}`);
+    if (booleans.has(name)) {
+      if (equalAt !== -1) throw new Error(`--${name} does not accept a value`);
+      assign(name, true);
+      continue;
     }
+    const value = equalAt === -1 ? argv[i + 1] : argument.slice(equalAt + 1);
+    if (equalAt === -1) {
+      if (value === undefined || value.startsWith("--")) throw new Error(`--${name} requires a value`);
+      i++;
+    }
+    if (value.trim() === "") throw new Error(`--${name} requires a non-empty value`);
+    assign(name, value);
   }
-  return flags;
+  return { flags, positionals };
 }
 
 function splitCsv(s) {
-  return (s || "").split(",").map((x) => x.trim()).filter(Boolean);
+  return (typeof s === "string" ? s : "").split(",").map((x) => x.trim()).filter(Boolean);
+}
+
+function boundedInteger(value, fallback, minimum, maximum, option) {
+  if (value === undefined) return fallback;
+  if (!/^(?:0|[1-9]\d*)$/.test(value)) throw new Error(`--${option} must be an integer`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`--${option} must be between ${minimum} and ${maximum}`);
+  }
+  return parsed;
+}
+
+function stripGlobalOptions(argv) {
+  const options = {};
+  const remaining = [];
+  const assign = (name, value) => {
+    if (Object.prototype.hasOwnProperty.call(options, name)) throw new Error(`Duplicate global option: --${name}`);
+    if (typeof value !== "string" || !value.trim()) throw new Error(`--${name} requires a non-empty value`);
+    options[name] = value.trim();
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const argument = argv[i];
+    const matched = argument.match(/^--(url|user-id)=(.*)$/);
+    if (matched) {
+      assign(matched[1], matched[2]);
+      continue;
+    }
+    if (argument === "--url" || argument === "--user-id") {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith("--")) throw new Error(`${argument} requires a value`);
+      assign(argument.slice(2), value);
+      i++;
+      continue;
+    }
+    remaining.push(argument);
+  }
+  return { options, remaining };
 }
 
 // ---------------------------------------------------------------------------
@@ -149,34 +265,18 @@ function printTable(rows) {
 // Commands.
 // ---------------------------------------------------------------------------
 
-async function cmdSave(mcpUrl, args) {
-  const f = parseFlags(args);
-  // Drop every element that contributed to a parsed flag. Handles both forms:
-  //   --key value  (drops both tokens)
-  //   --key=value  (drops the single token; the value is baked into the flag)
-  const pos = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith("--")) {
-      if (a.indexOf("=") === -1) {
-        const key = a.slice(2);
-        if (f[key] !== true) i++; // skip paired value
-      }
-      continue;
-    }
-    pos.push(a);
-  }
-  const content = pos.join(" ").replace(/^"(.*)"$/, "$1");
-  if (!content) {
-    console.error("Usage: hog-memory save <content> [--task-type TYPE] [--tags a,b,c] [--task-desc DESC] [--work-id WORK_ID]");
-    process.exit(1);
-  }
+async function cmdSave(mcpUrl, userId, args) {
+  const { flags: f, positionals } = parseCommandArgs(args, {
+    valueOptions: ["task-type", "tags", "task-desc", "work-id"],
+  });
+  const content = positionals.join(" ").replace(/^"(.*)"$/, "$1");
+  if (!content.trim()) throw new Error("Usage: hog-memory save <content> [--task-type TYPE] [--tags a,b,c] [--task-desc DESC] [--work-id WORK_ID]");
   const payload = {
     content,
     // Always pass task_type; fall back to "other" to mirror the extension's contract.
     task_type: f["task-type"] || "other",
-    tags: splitCsv(f.tags) || [],
-    userId: f["user-id"] || "default",
+    tags: splitCsv(f.tags),
+    userId,
   };
   if (f["task-desc"]) payload.task_desc = f["task-desc"];
   // Only persist a work ID that the caller explicitly knows. Never derive or
@@ -188,21 +288,12 @@ async function cmdSave(mcpUrl, args) {
   console.log(extractText(res));
 }
 
-async function cmdSearch(mcpUrl, args) {
-  const f = parseFlags(args);
-  const pos = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith("--")) {
-      if (a.indexOf("=") === -1) {
-        const key = a.slice(2);
-        if (f[key] !== true) i++;
-      }
-      continue;
-    }
-    pos.push(a);
-  }
-  const query = pos.join(" ").replace(/^"(.*)"$/, "$1");
+async function cmdSearch(mcpUrl, userId, args) {
+  const { flags: f, positionals } = parseCommandArgs(args, {
+    valueOptions: ["task-type", "stock-codes", "industry", "tags", "limit"],
+    booleanOptions: ["json"],
+  });
+  const query = positionals.join(" ").replace(/^"(.*)"$/, "$1");
   // Build payload matching MemorySearchParamsSchema (hedgehog-gateway/src/mcp/mcp-server.ts):
   //   query?: string.min(1)      — OMIT when empty (sending "" fails Zod validation)
   //   task_type?: string          — OMIT when not provided
@@ -212,15 +303,14 @@ async function cmdSearch(mcpUrl, args) {
   //   limit: number.int.min(1).max(50).default(10)
   //   userId: string.default('default')
   const payload = {
-    userId: f["user-id"] || "default",
-    limit: f.limit ? Math.min(Math.max(1, parseInt(f.limit, 10)), 50) : 10,
+    userId,
+    limit: boundedInteger(f.limit, 10, 1, 50, "limit"),
   };
   if (query) payload.query = query;
   if (f["task-type"]) payload.task_type = f["task-type"];
   const sc = splitCsv(f["stock-codes"]);
   if (sc.length) payload.stock_codes = sc;
-  const indArr = splitCsv(f.industry);
-  if (indArr.length) payload.industry = indArr[0]; // single string, not array
+  if (f.industry) payload.industry = f.industry;
   const tg = splitCsv(f.tags);
   if (tg.length) payload.tags = tg;
   const res = await callMcp(mcpUrl, "kb_memory_search", payload);
@@ -237,31 +327,16 @@ async function cmdSearch(mcpUrl, args) {
   }
 }
 
-async function cmdRecall(mcpUrl, args) {
-  const f = parseFlags(args);
-  const pos = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith("--")) {
-      if (a.indexOf("=") === -1) {
-        const key = a.slice(2);
-        if (f[key] !== true) i++;
-      }
-      continue;
-    }
-    pos.push(a);
-  }
-  const id = pos[0];
-  if (!id) {
-    console.error("Usage: hog-memory recall <id> [--user-id ID]");
-    process.exit(1);
-  }
+async function cmdRecall(mcpUrl, userId, args) {
+  const { positionals } = parseCommandArgs(args, {});
+  if (positionals.length !== 1 || !positionals[0].trim()) throw new Error("Usage: hog-memory recall <id>");
+  const [id] = positionals;
   // Respect --user-id (matches the save/search contract); the extension omits userId
   // because the MCP Server defaults it server-side, but we pass it explicitly for
   // cross-user isolation when the operator asks for a non-default user's memory.
   const res = await callMcp(mcpUrl, "kb_memory_get", {
     id,
-    userId: f["user-id"] || "default",
+    userId,
   });
   const text = extractText(res);
   // Try pretty-print JSON objects; fall back to raw text for "not found" messages.
@@ -273,26 +348,16 @@ async function cmdRecall(mcpUrl, args) {
   }
 }
 
-async function cmdUpdate(mcpUrl, args) {
-  const f = parseFlags(args);
-  const pos = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith("--")) {
-      if (a.indexOf("=") === -1) {
-        const key = a.slice(2);
-        if (f[key] !== true) i++;
-      }
-      continue;
-    }
-    pos.push(a);
+async function cmdUpdate(mcpUrl, userId, args) {
+  const { flags: f, positionals } = parseCommandArgs(args, {
+    valueOptions: ["content", "tags", "task-type", "task-desc"],
+  });
+  if (positionals.length !== 1 || !positionals[0].trim()) {
+    throw new Error("Usage: hog-memory update <id> [--content C] [--tags a,b] [--task-type T] [--task-desc D]");
   }
-  const id = pos[0];
-  if (!id) {
-    console.error("Usage: hog-memory update <id> [--content C] [--tags a,b] [--task-type T] [--task-desc D]");
-    process.exit(1);
-  }
-  const payload = { id, userId: f["user-id"] || "default" };
+  if (Object.keys(f).length === 0) throw new Error("hog-memory update requires at least one update option");
+  const [id] = positionals;
+  const payload = { id, userId };
   if (f.content) payload.content = f.content;
   if (f.tags !== undefined) payload.tags = splitCsv(f.tags);
   if (f["task-type"]) payload.task_type = f["task-type"];
@@ -301,37 +366,26 @@ async function cmdUpdate(mcpUrl, args) {
   console.log(extractText(res));
 }
 
-async function cmdDelete(mcpUrl, args) {
-  const f = parseFlags(args);
-  const pos = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith("--")) {
-      if (a.indexOf("=") === -1) {
-        const key = a.slice(2);
-        if (f[key] !== true) i++;
-      }
-      continue;
-    }
-    pos.push(a);
-  }
-  const id = pos[0];
-  if (!id) {
-    console.error("Usage: hog-memory delete <id> [--user-id ID]");
-    process.exit(1);
-  }
+async function cmdDelete(mcpUrl, userId, args) {
+  const { positionals } = parseCommandArgs(args, {});
+  if (positionals.length !== 1 || !positionals[0].trim()) throw new Error("Usage: hog-memory delete <id>");
+  const [id] = positionals;
   const res = await callMcp(mcpUrl, "kb_memory_delete", {
     id,
-    userId: f["user-id"] || "default",
+    userId,
   });
   console.log(extractText(res));
 }
 
-async function cmdList(mcpUrl, args) {
-  const f = parseFlags(args);
+async function cmdList(mcpUrl, userId, args) {
+  const { flags: f, positionals } = parseCommandArgs(args, {
+    valueOptions: ["task-type", "limit"],
+    booleanOptions: ["json"],
+  });
+  if (positionals.length !== 0) throw new Error("Usage: hog-memory list [--task-type T] [--limit N] [--json]");
   const payload = {
-    userId: f["user-id"] || "default",
-    limit: f.limit ? Math.min(Math.max(1, parseInt(f.limit, 10)), 100) : 50,
+    userId,
+    limit: boundedInteger(f.limit, 50, 1, 100, "limit"),
   };
   if (f["task-type"]) payload.task_type = f["task-type"];
   const res = await callMcp(mcpUrl, "kb_memory_list", payload);
@@ -357,36 +411,15 @@ async function main() {
   // whether placed before or after the subcommand. This lets both forms work:
   //   hog-memory --url http://... save ...
   //   hog-memory save ... --url http://...
-  const globalFlags = {};
-  const stripped = [];
-  const argv = process.argv.slice(2);
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    const eq = a.indexOf("=");
-    // --url=xxx / --user-id=xxx (equals form, anywhere)
-    if (eq !== -1 && (a === "--url" || a.slice(0, eq) === "--url" || a.slice(0, eq) === "--user-id")) {
-      globalFlags[a.slice(2, eq)] = a.slice(eq + 1);
-      continue;
-    }
-    if (a === "--url" || a === "--user-id") {
-      const next = argv[i + 1];
-      // Only consume as global if followed by a non-flag value; otherwise leave
-      // it in argv so parseFlags in cmd* can surface the misuse to the user.
-      if (next === undefined || next.startsWith("--")) {
-        stripped.push(a);
-        continue;
-      }
-      globalFlags[a.slice(2)] = next;
-      i++;
-      continue;
-    }
-    stripped.push(a);
-  }
+  const { options: globalFlags, remaining: stripped } = stripGlobalOptions(process.argv.slice(2));
   const cmd = stripped[0];
   const rest = stripped.slice(1);
   if (!cmd || cmd === "-h" || cmd === "--help") {
+    if ((!cmd && Object.keys(globalFlags).length > 0) || rest.length > 0) {
+      throw new Error("Help cannot be combined with commands or global options");
+    }
     console.log(
-      "hog-memory v1.3.0 — Cross-session persistent memory CLI\n" +
+      "hog-memory v1.3.2 — Cross-session persistent memory CLI\n" +
       "\n" +
       "Usage:\n" +
       "  hog-memory save <content> [--task-type TYPE] [--tags a,b] [--task-desc DESC] [--work-id WORK_ID]\n" +
@@ -405,39 +438,31 @@ async function main() {
       "\n" +
       "Task types: market_insight | research_record | portfolio | review | strategy_quant | other\n"
     );
-    process.exit(0);
+    return;
   }
-  // When both global and subcommand forms are present, the subcommand form wins
-  // (it is closer to the call site); the global form is used only as a fallback.
-  // We push the global flag into effectiveRest only when the subcommand didn't
-  // already supply one, so `cmd*` functions see a single unified flag list.
-  const effectiveRest = rest;
-  if (globalFlags.url && !parseFlags(rest).url) effectiveRest.push("--url", globalFlags.url);
-  if (globalFlags["user-id"] && !parseFlags(rest)["user-id"]) effectiveRest.push("--user-id", globalFlags["user-id"]);
-  const urlFlag = parseFlags(effectiveRest).url;
-  const mcpUrl = await resolveMcpUrl(urlFlag);
+  const userId = globalFlags["user-id"] || "default";
+  const mcpUrl = await resolveMcpUrl(globalFlags.url);
   if (!mcpUrl) {
     console.error(
       "Error: MCP KB endpoint not found.\n" +
       "Pass --url, set HEDGEHOG_MCP_KB_URL, or configure memory.mcpKbUrl in ~/.hogagent/hogagent.json."
     );
-    process.exit(1);
+    return 1;
   }
-  try {
-    if (cmd === "save") await cmdSave(mcpUrl, effectiveRest);
-    else if (cmd === "search") await cmdSearch(mcpUrl, effectiveRest);
-    else if (cmd === "recall") await cmdRecall(mcpUrl, effectiveRest);
-    else if (cmd === "update") await cmdUpdate(mcpUrl, effectiveRest);
-    else if (cmd === "delete") await cmdDelete(mcpUrl, effectiveRest);
-    else if (cmd === "list") await cmdList(mcpUrl, effectiveRest);
-    else {
-      console.error(`Unknown command: ${cmd}. Use -h for help.`);
-      process.exit(1);
-    }
-  } catch (err) {
-    console.error(`Error: ${err.message}`);
-    process.exit(1);
-  }
+  if (cmd === "save") await cmdSave(mcpUrl, userId, rest);
+  else if (cmd === "search") await cmdSearch(mcpUrl, userId, rest);
+  else if (cmd === "recall") await cmdRecall(mcpUrl, userId, rest);
+  else if (cmd === "update") await cmdUpdate(mcpUrl, userId, rest);
+  else if (cmd === "delete") await cmdDelete(mcpUrl, userId, rest);
+  else if (cmd === "list") await cmdList(mcpUrl, userId, rest);
+  else throw new Error(`Unknown command: ${cmd}. Use -h for help.`);
+  return 0;
 }
 
-main();
+main().then(
+  (exitCode) => { process.exitCode = exitCode; },
+  (err) => {
+    console.error(`Error: ${err.message}`);
+    process.exitCode = 1;
+  },
+);

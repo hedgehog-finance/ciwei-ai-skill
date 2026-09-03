@@ -44,7 +44,7 @@ Authentication: Append `token=<API_KEY>` query parameter to each request.
 ### Query Apple Real-time Quote
 
 ```bash
-node scripts/call_api.js --api getQuote --params '{"symbol":"AAPL"}'
+node scripts/call_api.js --api getQuote --params-file '<workspace>/tmp-hog-finnhub-<unique-id>.json'
 ```
 
 Response example:
@@ -64,37 +64,37 @@ Response example:
 ### Query Tesla Company Profile
 
 ```bash
-node scripts/call_api.js --api getCompanyProfile --params '{"symbol":"TSLA"}'
+node scripts/call_api.js --api getCompanyProfile --params-file '<workspace>/tmp-hog-finnhub-<unique-id>.json'
 ```
 
 ### Query Analyst Recommendations for Microsoft
 
 ```bash
-node scripts/call_api.js --api getRecommendations --params '{"symbol":"MSFT"}'
+node scripts/call_api.js --api getRecommendations --params-file '<workspace>/tmp-hog-finnhub-<unique-id>.json'
 ```
 
 ### Query Cryptocurrency (Bitcoin)
 
 ```bash
-node scripts/call_api.js --api getCryptoQuote --params '{"symbol":"BINANCE:BTCUSDT"}'
+node scripts/call_api.js --api getCryptoQuote --params-file '<workspace>/tmp-hog-finnhub-<unique-id>.json'
 ```
 
 ### Search Stock Symbols Containing "apple"
 
 ```bash
-node scripts/call_api.js --api searchSymbol --params '{"q":"apple"}'
+node scripts/call_api.js --api searchSymbol --params-file '<workspace>/tmp-hog-finnhub-<unique-id>.json'
 ```
 
 ### Query Forex Rates (USD as Base Currency)
 
 ```bash
-node scripts/call_api.js --api getForexRates --params '{"base":"USD"}'
+node scripts/call_api.js --api getForexRates --params-file '<workspace>/tmp-hog-finnhub-<unique-id>.json'
 ```
 
 ### Query Economic Calendar (Specified Date Range)
 
 ```bash
-node scripts/call_api.js --api getEconomicCalendar --params '{"from":"2024-01-01","to":"2024-01-31"}'
+node scripts/call_api.js --api getEconomicCalendar --params-file '<workspace>/tmp-hog-finnhub-<unique-id>.json'
 ```
 
 ---

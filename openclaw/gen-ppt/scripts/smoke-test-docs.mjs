@@ -9,6 +9,15 @@ import { spawnSync } from "node:child_process";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const skillDir = dirname(scriptDir);
+const args = process.argv.slice(2);
+if (args.length === 1 && ["-h", "--help"].includes(args[0])) {
+  console.log("Usage: smoke-test-docs.mjs");
+  process.exit(0);
+}
+if (args.length > 0) {
+  console.error(`Error: unexpected argument: ${args[0]}`);
+  process.exit(1);
+}
 const workDir = mkdtempSync(join(tmpdir(), "gen-ppt-docs-"));
 
 function jsonBlocks(relativePath) {
@@ -33,7 +42,7 @@ try {
     const configPath = join(workDir, `example-${index + 1}.json`);
     const outputPath = join(workDir, `example-${index + 1}.pptx`);
     writeFileSync(configPath, JSON.stringify(config));
-    const result = spawnSync(process.execPath, [join(scriptDir, "gen-ppt.mjs"), configPath, outputPath], { encoding: "utf8" });
+    const result = spawnSync(process.execPath, [join(scriptDir, "gen-ppt.mjs"), configPath, outputPath], { encoding: "utf8", shell: false, timeout: 300_000 });
     if (result.error || result.status !== 0) {
       throw new Error(`Example ${index + 1} failed generation: ${(result.stderr || result.stdout || result.error?.message).trim()}`);
     }

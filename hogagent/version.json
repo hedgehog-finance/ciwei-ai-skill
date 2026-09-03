@@ -1,12 +1,12 @@
 {
-  "hedgehog-company-index-data": "1.11.0",
+  "hedgehog-company-index-data": "1.11.2",
   "hedgehog-daily-morning-briefing": "2.2.5",
   "hedgehog-financial-report-analysis": "1.3.1",
   "hedgehog-in-depth-analysis": "2.2.2",
   "hedgehog-information-verification": "2.2.2",
-  "hedgehog-macro-industry-data": "1.8.0",
-  "hedgehog-news-reports": "1.9.0",
+  "hedgehog-macro-industry-data": "1.8.2",
+  "hedgehog-news-reports": "1.9.2",
   "hedgehog-stock-research": "2.3.0",
-  "hog-gateway-tools": "3.5.0",
-  "hog-kb-tools": "1.2.0"
+  "hog-gateway-tools": "3.5.2",
+  "hog-kb-tools": "1.2.2"
 }

@@ -9,9 +9,38 @@
  * Endpoint URL and credentials come from config; this module is vendor-agnostic —
  * switch providers by configuring a different endpoint.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { log } from "./doc-utils.mjs";
+
+const MAX_INPUT_BYTES = 100 * 1024 * 1024;
+const MAX_RESPONSE_BYTES = 50 * 1024 * 1024;
+
+async function readResponseText(response) {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+    throw new Error(`File parser response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+  }
+  if (!response.body?.getReader) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > MAX_RESPONSE_BYTES) throw new Error(`File parser response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+    return buffer.toString("utf8");
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error(`File parser response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 /**
  * Convert a document to Markdown via file-parsing service.
@@ -25,7 +54,20 @@ export async function parseFileWithLlm(filePath, fileType, config) {
   if (!apiKey || !endpoint) {
     throw new Error("LLM parsing path not configured: both endpoint and apiKey required");
   }
+  if (typeof apiKey !== "string" || /[\r\n]/.test(apiKey) || apiKey.length > 8192) {
+    throw new Error("File parser API key must be a single-line string no longer than 8192 characters");
+  }
+  if (typeof fileType !== "string" || !fileType.trim() || /[\r\n]/.test(fileType) || fileType.length > 100) {
+    throw new Error("fileType must be a non-empty single-line string no longer than 100 characters");
+  }
+  if (typeof toolType !== "string" || !toolType.trim() || /[\r\n]/.test(toolType) || toolType.length > 100) {
+    throw new Error("toolType must be a non-empty single-line string no longer than 100 characters");
+  }
 
+  const fileStat = statSync(filePath);
+  if (!fileStat.isFile() || fileStat.size > MAX_INPUT_BYTES) {
+    throw new Error(`Input file exceeds ${MAX_INPUT_BYTES} bytes`);
+  }
   const fileBuffer = readFileSync(filePath);
   const fileName = basename(filePath);
 
@@ -37,23 +79,38 @@ export async function parseFileWithLlm(filePath, fileType, config) {
     file_type: fileType,
   });
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": `multipart/form-data; boundary=${body.boundary}`,
-    },
-    body: body.buffer,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000);
+  let response;
+  let responseText;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      redirect: "error",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": `multipart/form-data; boundary=${body.boundary}`,
+      },
+      body: body.buffer,
+      signal: controller.signal,
+    });
+    responseText = await readResponseText(response);
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
-    const errText = await response.text().catch(() => "");
     throw new Error(
-      `File parser returned HTTP ${response.status}: ${errText.slice(0, 500)}`
+      `File parser returned HTTP ${response.status}: ${responseText.slice(0, 500)}`
     );
   }
 
-  const result = await response.json().catch(() => null);
+  let result;
+  try {
+    result = JSON.parse(responseText);
+  } catch {
+    result = null;
+  }
   if (!result) {
     throw new Error("File parser returned non-JSON response");
   }
@@ -89,9 +146,10 @@ function buildMultipartBody(fields) {
         )
       );
     } else {
+      const safeFilename = value.filename.replace(/["\r\n]/g, "_");
       parts.push(
         Buffer.from(
-          `--${boundary}\r\nContent-Disposition: form-data; name="${name}"; filename="${value.filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`
+          `--${boundary}\r\nContent-Disposition: form-data; name="${name}"; filename="${safeFilename}"\r\nContent-Type: application/octet-stream\r\n\r\n`
         )
       );
       parts.push(value.buffer);

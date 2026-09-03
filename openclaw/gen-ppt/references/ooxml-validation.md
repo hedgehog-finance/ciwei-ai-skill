@@ -29,7 +29,7 @@ Input validation must also reject empty/mismatched series, non-finite numbers, n
 Generation already runs structural validation:
 
 ```bash
-node <skill_dir>/scripts/gen-ppt.mjs <config.json> <output.pptx> --target=powerpoint|keynote|universal
+node <skill_dir>/scripts/gen-ppt.mjs <workspace>/tmp-gen-ppt-<id>.json <output.pptx> --target=powerpoint|keynote|universal
 ```
 
 Run the validator independently when auditing an existing result:

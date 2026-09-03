@@ -83,20 +83,38 @@ function evaluate(expression) {
 
 function parseArgs(argv) {
   const args = argv.slice(2);
-  let expression = "";
+  const expressionParts = [];
   let precision = 10;
+  let precisionSeen = false;
+  let help = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === "--precision" && args[i + 1]) {
-      precision = parseInt(args[i + 1], 10);
-      i++;
-    } else if (!arg.startsWith("--")) {
-      expression += (expression ? " " : "") + arg;
+    if (arg === "-h" || arg === "--help") {
+      if (args.length !== 1) throw new Error("--help cannot be combined with other arguments");
+      help = true;
+      continue;
+    }
+    if (arg === "--precision" || arg.startsWith("--precision=")) {
+      if (precisionSeen) throw new Error("Duplicate option: --precision");
+      const equalAt = arg.indexOf("=");
+      const raw = equalAt === -1 ? args[i + 1] : arg.slice(equalAt + 1);
+      if (equalAt === -1) {
+        if (raw === undefined || raw.startsWith("--")) throw new Error("--precision requires a value");
+        i++;
+      }
+      if (!/^(?:0|[1-9]\d*)$/.test(raw)) throw new Error("--precision must be an integer");
+      precision = Number(raw);
+      if (precision < 0 || precision > 15) throw new Error("--precision must be between 0 and 15");
+      precisionSeen = true;
+    } else if (arg.startsWith("--")) {
+      throw new Error(`Unknown option: ${arg.split("=")[0]}`);
+    } else {
+      expressionParts.push(arg);
     }
   }
 
-  return { expression, precision };
+  return { expression: expressionParts.join(" "), precision, help };
 }
 
 // ---------------------------------------------------------------------------
@@ -104,27 +122,37 @@ function parseArgs(argv) {
 // ---------------------------------------------------------------------------
 
 function main() {
-  const { expression, precision } = parseArgs(process.argv);
+  let parsed;
+  try {
+    parsed = parseArgs(process.argv);
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exitCode = 1;
+    return;
+  }
+  const { expression, precision, help } = parsed;
 
+  if (help) {
+    console.log("Usage: node cli.mjs \"<expression>\" [--precision N]");
+    return;
+  }
   if (!expression) {
     console.error("Usage: node cli.mjs \"<expression>\" [--precision N]");
     console.error("Example: node cli.mjs \"2 + 3 * 4\"");
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
-
-  // Clamp precision to valid range
-  const clampedPrecision = Math.min(Math.max(precision, 0), 15);
 
   try {
     const result = evaluate(expression);
     const formatted = Number.isInteger(result)
       ? result.toString()
-      : result.toFixed(clampedPrecision).replace(/0+$/, "").replace(/\.$/, "");
+      : result.toFixed(precision).replace(/0+$/, "").replace(/\.$/, "");
 
     console.log(formatted);
   } catch (err) {
     console.error(`Error: ${err.message}`);
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 

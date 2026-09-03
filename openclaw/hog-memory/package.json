@@ -1,7 +1,7 @@
 {
   "name": "hog-memory",
   "license": "GPL-3.0",
-  "version": "1.3.0",
+  "version": "1.3.2",
   "private": true,
   "type": "module",
   "description": "Cross-session persistent memory CLI. Save, search and recall market insights, research conclusions and portfolio changes via Gateway KB MCP Server.",

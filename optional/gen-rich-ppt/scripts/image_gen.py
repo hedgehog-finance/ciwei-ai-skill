@@ -15,12 +15,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import binascii
 from io import BytesIO
 import json
 import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -50,7 +52,10 @@ GPT_IMAGE_2_MAX_EDGE = 3840
 GPT_IMAGE_2_MAX_RATIO = 3.0
 
 MAX_IMAGE_BYTES = 50 * 1024 * 1024
+MAX_TEXT_INPUT_BYTES = 10 * 1024 * 1024
 MAX_BATCH_JOBS = 500
+MAX_OUTPUT_DIMENSION = 32768
+MAX_OUTPUT_PIXELS = 25_000_000
 DEFAULT_RUNTIME_HOME = "~/.gen-rich-ppt"
 
 
@@ -90,7 +95,8 @@ def _api_target_label() -> str:
 
 def _is_atlascloud_base_url(base_url: str) -> bool:
     hostname = urlparse(base_url).hostname or ""
-    return "atlascloud.ai" in hostname.lower()
+    hostname = hostname.lower()
+    return hostname == "atlascloud.ai" or hostname.endswith(".atlascloud.ai")
 
 
 def _preview_endpoint(kind: str) -> str:
@@ -127,7 +133,7 @@ def _dependency_hint(package: str, *, upgrade: bool = False) -> str:
     requirements = _skill_root() / "requirements.txt"
     return (
         "Install gen-rich-ppt dependencies in the shared runtime first, for example "
-        f"`python3 {_skill_root() / 'scripts' / 'gen_rich_ppt_runtime.py'} bootstrap`, "
+        f"`{sys.executable} {_skill_root() / 'scripts' / 'gen_rich_ppt_runtime.py'} bootstrap`, "
         f"or install {package} directly with `{runtime_python} -m pip install "
         f"{package_arg}`. Requirements file: `{requirements}`."
     )
@@ -146,12 +152,12 @@ def _ensure_api_key(dry_run: bool) -> None:
     model = _default_model()
     if base_url:
         command = (
-            f'python3 {runtime_script} config --api-key "your-api-key" '
+            f'{sys.executable} {runtime_script} config --api-key "your-api-key" '
             f'--base-url "{base_url}" --model {model}'
         )
         target_hint = f"Detected third-party OpenAI-compatible API via OPENAI_BASE_URL={base_url}."
     else:
-        command = f'python3 {runtime_script} config --api-key "your-api-key" --model {model}'
+        command = f'{sys.executable} {runtime_script} config --api-key "your-api-key" --model {model}'
         target_hint = "Detected official OpenAI API mode because OPENAI_BASE_URL is not set."
     _die(
         "OPENAI_API_KEY is not set for gen-rich-ppt CLI/API fallback.\n"
@@ -168,11 +174,30 @@ def _read_prompt(prompt: Optional[str], prompt_file: Optional[str]) -> str:
         _die("Use --prompt or --prompt-file, not both.")
     if prompt_file:
         if prompt_file == "-":
-            return sys.stdin.read().strip()
+            raw_stdin = sys.stdin.read(MAX_TEXT_INPUT_BYTES + 1)
+            if len(raw_stdin.encode("utf-8")) > MAX_TEXT_INPUT_BYTES:
+                _die("Prompt from stdin exceeds the 10MB limit")
+            return raw_stdin.strip()
         path = Path(prompt_file)
         if not path.exists():
             _die(f"Prompt file not found: {path}")
-        return path.read_text(encoding="utf-8").strip()
+        if not path.is_file() or path.stat().st_size > MAX_TEXT_INPUT_BYTES:
+            _die(f"Prompt must be a regular file no larger than 10MB: {path}")
+        try:
+            raw = path.read_text(encoding="utf-8-sig").strip()
+        except OSError as exc:
+            _die(f"Unable to read prompt file {path}: {exc}")
+        if path.suffix.lower() == ".json":
+            try:
+                job = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                _die(f"Invalid JSON prompt file {path}: {exc}")
+            if not isinstance(job, dict) or not isinstance(job.get("prompt"), str):
+                _die(f"JSON prompt file {path} must be an object with a string prompt field")
+            raw = job["prompt"].strip()
+        if not raw:
+            _die(f"Prompt file is empty: {path}")
+        return raw
     if prompt:
         return prompt.strip()
     _die("Missing prompt. Use --prompt or --prompt-file.")
@@ -185,8 +210,10 @@ def _check_image_paths(paths: Iterable[str]) -> List[Path]:
         path = Path(raw)
         if not path.exists():
             _die(f"Image file not found: {path}")
+        if not path.is_file():
+            _die(f"Image path is not a file: {path}")
         if path.stat().st_size > MAX_IMAGE_BYTES:
-            _warn(f"Image exceeds 50MB limit: {path}")
+            _die(f"Image exceeds 50MB limit: {path}")
         resolved.append(path)
     return resolved
 
@@ -296,21 +323,39 @@ def _validate_model_specific_options(
 
 
 def _validate_generate_payload(payload: Dict[str, Any]) -> None:
-    model = str(payload.get("model", DEFAULT_MODEL))
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        _die("prompt must be a non-empty string")
+    if len(prompt.encode("utf-8")) > MAX_TEXT_INPUT_BYTES:
+        _die("prompt exceeds the 10MB limit")
+    model = payload.get("model", DEFAULT_MODEL)
+    if not isinstance(model, str) or not model.strip():
+        _die("model must be a non-empty string")
     _validate_model(model)
-    n = int(payload.get("n", 1))
+    n = payload.get("n", 1)
+    if not isinstance(n, int) or isinstance(n, bool):
+        _die("n must be an integer")
     if n < 1 or n > 10:
         _die("n must be between 1 and 10")
-    size = str(payload.get("size", DEFAULT_SIZE))
-    quality = str(payload.get("quality", DEFAULT_QUALITY))
+    size = payload.get("size", DEFAULT_SIZE)
+    quality = payload.get("quality", DEFAULT_QUALITY)
+    if not isinstance(size, str) or not isinstance(quality, str):
+        _die("size and quality must be strings")
     background = payload.get("background")
+    if background is not None and not isinstance(background, str):
+        _die("background must be a string or null")
+    for key in ("output_format", "moderation"):
+        value = payload.get(key)
+        if value is not None and not isinstance(value, str):
+            _die(f"{key} must be a string or null")
     _validate_size(size, model)
     _validate_quality(quality)
     _validate_background(background)
     _validate_model_specific_options(model=model, background=background)
     oc = payload.get("output_compression")
-    if oc is not None and not (0 <= int(oc) <= 100):
-        _die("output_compression must be between 0 and 100")
+    if oc is not None:
+        if not isinstance(oc, int) or isinstance(oc, bool) or not (0 <= oc <= 100):
+            _die("output_compression must be an integer between 0 and 100")
 
 
 def _build_output_paths(
@@ -323,7 +368,6 @@ def _build_output_paths(
 
     if out_dir:
         out_base = Path(out_dir)
-        out_base.mkdir(parents=True, exist_ok=True)
         return [out_base / f"image_{i}{ext}" for i in range(1, count + 1)]
 
     out_path = Path(out)
@@ -334,9 +378,7 @@ def _build_output_paths(
     if out_path.suffix == "":
         out_path = out_path.with_suffix(ext)
     elif output_format and out_path.suffix.lstrip(".").lower() != output_format:
-        _warn(
-            f"Output extension {out_path.suffix} does not match output-format {output_format}."
-        )
+        _die(f"Output extension {out_path.suffix} does not match output-format {output_format}.")
 
     if count == 1:
         return [out_path]
@@ -404,16 +446,39 @@ def _print_request(payload: dict) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
-def _decode_and_write(images: List[str], outputs: List[Path], force: bool) -> None:
-    for idx, image_b64 in enumerate(images):
-        if idx >= len(outputs):
-            break
-        out_path = outputs[idx]
-        if out_path.exists() and not force:
-            _die(f"Output already exists: {out_path} (use --force to overwrite)")
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(base64.b64decode(image_b64))
-        print(f"Wrote {out_path}")
+def _decode_image(image_b64: str) -> bytes:
+    if not isinstance(image_b64, str):
+        _die("Image API returned non-string base64 data")
+    max_encoded_bytes = ((MAX_IMAGE_BYTES + 2) // 3) * 4
+    if len(image_b64) > max_encoded_bytes:
+        _die("Image API response exceeds the 50MB decoded image limit")
+    try:
+        raw = base64.b64decode(image_b64, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        _die(f"Image API returned invalid base64 data: {exc}")
+    if len(raw) > MAX_IMAGE_BYTES:
+        _die("Image API response exceeds the 50MB decoded image limit")
+    return raw
+
+
+def _validate_image_bytes(image_bytes: bytes, output_format: str) -> None:
+    try:
+        from PIL import Image
+    except Exception:
+        _die(f"Validating generated images requires Pillow. {_dependency_hint('pillow')}")
+    expected_format = "JPEG" if output_format.lower() in {"jpg", "jpeg"} else output_format.upper()
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            width, height = image.size
+            if width < 1 or height < 1 or width > MAX_OUTPUT_DIMENSION or height > MAX_OUTPUT_DIMENSION:
+                _die(f"Image dimensions must be between 1 and {MAX_OUTPUT_DIMENSION} pixels per edge")
+            if width * height > MAX_OUTPUT_PIXELS:
+                _die(f"Image area must not exceed {MAX_OUTPUT_PIXELS} pixels")
+            if image.format != expected_format:
+                _die(f"Image API returned {image.format or 'unknown'} data but {output_format} was requested")
+            image.verify()
+    except (OSError, ValueError) as exc:
+        _die(f"Image API returned invalid image data: {exc}")
 
 
 def _derive_downscale_path(path: Path, suffix: str) -> Path:
@@ -422,18 +487,68 @@ def _derive_downscale_path(path: Path, suffix: str) -> Path:
     return path.with_name(f"{path.stem}{suffix}{path.suffix}")
 
 
+def _validate_downscale_suffix(suffix: str) -> None:
+    if not suffix or suffix in {".", ".."} or "/" in suffix or "\\" in suffix or "\x00" in suffix:
+        _die("--downscale-suffix must be a non-empty filename suffix without path separators")
+
+
+def _path_key(path: Path) -> str:
+    value = str(path.resolve(strict=False))
+    return value.casefold() if os.name == "nt" else value
+
+
+def _all_output_paths(
+    outputs: List[Path],
+    downscale_max_dim: Optional[int],
+    downscale_suffix: str,
+) -> List[Path]:
+    paths = list(outputs)
+    if downscale_max_dim is not None:
+        paths.extend(_derive_downscale_path(path, downscale_suffix) for path in outputs)
+    return paths
+
+
+def _preflight_output_paths(
+    paths: List[Path],
+    *,
+    force: bool,
+    protected: Iterable[Path] = (),
+    seen: Optional[set[str]] = None,
+) -> set[str]:
+    keys = set() if seen is None else set(seen)
+    protected_keys = {_path_key(path) for path in protected}
+    for path in paths:
+        key = _path_key(path)
+        if key in protected_keys:
+            _die(f"Output path must not overwrite an input file: {path}")
+        if key in keys:
+            _die(f"Duplicate output path: {path}")
+        if path.exists() and path.is_dir():
+            _die(f"Output path is a directory: {path}")
+        if path.exists() and not force:
+            _die(f"Output already exists: {path} (use --force to overwrite)")
+        keys.add(key)
+    return keys
+
+
 def _downscale_image_bytes(image_bytes: bytes, *, max_dim: int, output_format: str) -> bytes:
     try:
         from PIL import Image
     except Exception:
         _die(f"Downscaling requires Pillow. {_dependency_hint('pillow')}")
 
-    if max_dim < 1:
-        _die("--downscale-max-dim must be >= 1")
+    if max_dim < 1 or max_dim > MAX_OUTPUT_DIMENSION:
+        _die(f"--downscale-max-dim must be between 1 and {MAX_OUTPUT_DIMENSION}")
 
     with Image.open(BytesIO(image_bytes)) as img:
-        img.load()
         w, h = img.size
+        if w < 1 or h < 1 or w > MAX_OUTPUT_DIMENSION or h > MAX_OUTPUT_DIMENSION:
+            _die(
+                f"Image dimensions must be between 1 and {MAX_OUTPUT_DIMENSION} pixels per edge"
+            )
+        if w * h > MAX_OUTPUT_PIXELS:
+            _die(f"Image area must not exceed {MAX_OUTPUT_PIXELS} pixels")
+        img.load()
         scale = min(1.0, float(max_dim) / float(max(w, h)))
         target = (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
 
@@ -465,28 +580,34 @@ def _decode_write_and_downscale(
     downscale_suffix: str,
     output_format: str,
 ) -> None:
-    for idx, image_b64 in enumerate(images):
-        if idx >= len(outputs):
-            break
+    if len(images) != len(outputs):
+        _die(f"Image API returned {len(images)} image(s); expected {len(outputs)}")
+    decoded = [_decode_image(image_b64) for image_b64 in images]
+    for raw in decoded:
+        _validate_image_bytes(raw, output_format)
+    artifacts: List[Tuple[Path, bytes]] = []
+    for idx, raw in enumerate(decoded):
         out_path = outputs[idx]
-        if out_path.exists() and not force:
-            _die(f"Output already exists: {out_path} (use --force to overwrite)")
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+        artifacts.append((out_path, raw))
+        if downscale_max_dim is not None:
+            artifacts.append((
+                _derive_downscale_path(out_path, downscale_suffix),
+                _downscale_image_bytes(raw, max_dim=downscale_max_dim, output_format=output_format),
+            ))
 
-        raw = base64.b64decode(image_b64)
-        out_path.write_bytes(raw)
-        print(f"Wrote {out_path}")
-
-        if downscale_max_dim is None:
-            continue
-
-        derived = _derive_downscale_path(out_path, downscale_suffix)
-        if derived.exists() and not force:
-            _die(f"Output already exists: {derived} (use --force to overwrite)")
-        derived.parent.mkdir(parents=True, exist_ok=True)
-        resized = _downscale_image_bytes(raw, max_dim=downscale_max_dim, output_format=output_format)
-        derived.write_bytes(resized)
-        print(f"Wrote {derived}")
+    for path, content in artifacts:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, path)
+        finally:
+            if os.path.exists(temp_name):
+                os.unlink(temp_name)
+        print(f"Wrote {path}")
 
 
 def _slugify(value: str) -> str:
@@ -503,8 +624,30 @@ def _normalize_job(job: Any, idx: int) -> Dict[str, Any]:
             _die(f"Empty prompt at job {idx}")
         return {"prompt": prompt}
     if isinstance(job, dict):
-        if "prompt" not in job or not str(job["prompt"]).strip():
+        allowed = {
+            "prompt", "out", "fields", "use_case", "scene", "subject", "style",
+            "composition", "lighting", "palette", "materials", "text", "constraints",
+            "negative", "model", "n", "size", "quality", "background", "output_format",
+            "output_compression", "moderation",
+        }
+        unknown = sorted(set(job) - allowed)
+        if unknown:
+            _die(f"Unknown job field(s) at line {idx}: {', '.join(unknown)}")
+        if not isinstance(job.get("prompt"), str) or not job["prompt"].strip():
             _die(f"Missing prompt for job {idx}")
+        if "out" in job and (not isinstance(job["out"], str) or not job["out"].strip()):
+            _die(f"out must be a non-empty string for job {idx}")
+        fields = job.get("fields", {})
+        if not isinstance(fields, dict):
+            _die(f"fields must be an object for job {idx}")
+        for key, value in fields.items():
+            if key not in {"use_case", "scene", "subject", "style", "composition", "lighting", "palette", "materials", "text", "constraints", "negative"}:
+                _die(f"Unknown fields entry for job {idx}: {key}")
+            if value is not None and not isinstance(value, str):
+                _die(f"fields.{key} must be a string or null for job {idx}")
+        for key in ("use_case", "scene", "subject", "style", "composition", "lighting", "palette", "materials", "text", "constraints", "negative"):
+            if key in job and job[key] is not None and not isinstance(job[key], str):
+                _die(f"{key} must be a string or null for job {idx}")
         return job
     _die(f"Invalid job at index {idx}: expected string or object.")
     return {}  # unreachable
@@ -514,8 +657,14 @@ def _read_jobs_jsonl(path: str) -> List[Dict[str, Any]]:
     p = Path(path)
     if not p.exists():
         _die(f"Input file not found: {p}")
+    if not p.is_file() or p.stat().st_size > MAX_TEXT_INPUT_BYTES:
+        _die(f"Batch input must be a regular file no larger than 10MB: {p}")
     jobs: List[Dict[str, Any]] = []
-    for line_no, raw in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
+    try:
+        contents = p.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError) as exc:
+        _die(f"Unable to read batch input {p}: {exc}")
+    for line_no, raw in enumerate(contents.splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -536,6 +685,8 @@ def _read_jobs_jsonl(path: str) -> List[Dict[str, Any]]:
 
 
 def _merge_non_null(dst: Dict[str, Any], src: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(src, dict):
+        _die("Job override fields must be JSON objects")
     merged = dict(dst)
     for k, v in src.items():
         if v is not None:
@@ -552,7 +703,6 @@ def _job_output_paths(
     n: int,
     explicit_out: Optional[str],
 ) -> List[Path]:
-    out_dir.mkdir(parents=True, exist_ok=True)
     ext = "." + output_format
 
     if explicit_out:
@@ -560,9 +710,7 @@ def _job_output_paths(
         if base.suffix == "":
             base = base.with_suffix(ext)
         elif base.suffix.lstrip(".").lower() != output_format:
-            _warn(
-                f"Job {idx}: output extension {base.suffix} does not match output-format {output_format}."
-            )
+            _die(f"Job {idx}: output extension {base.suffix} does not match output-format {output_format}.")
         base = out_dir / base.name
     else:
         slug = _slugify(prompt[:80])
@@ -592,33 +740,40 @@ async def _run_generate_batch(args: argparse.Namespace) -> int:
         "moderation": args.moderation,
     }
 
+    prepared: List[Tuple[Dict[str, Any], List[Path], str]] = []
+    seen_outputs: set[str] = set()
+    for i, job in enumerate(jobs, start=1):
+        prompt = job["prompt"].strip()
+        fields = _merge_non_null(base_fields, job.get("fields", {}))
+        fields = _merge_non_null(fields, {k: job.get(k) for k in base_fields.keys()})
+        augmented = _augment_prompt_fields(args.augment, prompt, fields)
+
+        payload = dict(base_payload)
+        payload["prompt"] = augmented
+        payload = _merge_non_null(payload, {k: job.get(k) for k in base_payload.keys()})
+        payload = {k: v for k, v in payload.items() if v is not None}
+        _validate_generate_payload(payload)
+
+        effective_output_format = _normalize_output_format(payload.get("output_format"))
+        _validate_transparency(payload.get("background"), effective_output_format)
+        payload["output_format"] = effective_output_format
+        outputs = _job_output_paths(
+            out_dir=out_dir,
+            output_format=effective_output_format,
+            idx=i,
+            prompt=prompt,
+            n=payload.get("n", 1),
+            explicit_out=job.get("out"),
+        )
+        seen_outputs = _preflight_output_paths(
+            _all_output_paths(outputs, args.downscale_max_dim, args.downscale_suffix),
+            force=args.force,
+            seen=seen_outputs,
+        )
+        prepared.append((payload, outputs, effective_output_format))
+
     if args.dry_run:
-        for i, job in enumerate(jobs, start=1):
-            prompt = str(job["prompt"]).strip()
-            fields = _merge_non_null(base_fields, job.get("fields", {}))
-            # Allow flat job keys as well (use_case, scene, etc.)
-            fields = _merge_non_null(fields, {k: job.get(k) for k in base_fields.keys()})
-            augmented = _augment_prompt_fields(args.augment, prompt, fields)
-
-            job_payload = dict(base_payload)
-            job_payload["prompt"] = augmented
-            job_payload = _merge_non_null(job_payload, {k: job.get(k) for k in base_payload.keys()})
-            job_payload = {k: v for k, v in job_payload.items() if v is not None}
-
-            _validate_generate_payload(job_payload)
-            effective_output_format = _normalize_output_format(job_payload.get("output_format"))
-            _validate_transparency(job_payload.get("background"), effective_output_format)
-            job_payload["output_format"] = effective_output_format
-
-            n = int(job_payload.get("n", 1))
-            outputs = _job_output_paths(
-                out_dir=out_dir,
-                output_format=effective_output_format,
-                idx=i,
-                prompt=prompt,
-                n=n,
-                explicit_out=job.get("out"),
-            )
+        for i, (job_payload, outputs, _) in enumerate(prepared, start=1):
             downscaled = None
             if args.downscale_max_dim is not None:
                 downscaled = [
@@ -643,33 +798,13 @@ async def _run_generate_batch(args: argparse.Namespace) -> int:
 
     any_failed = False
 
-    async def run_job(i: int, job: Dict[str, Any]) -> Tuple[int, Optional[str]]:
+    async def run_job(
+        i: int,
+        prepared_job: Tuple[Dict[str, Any], List[Path], str],
+    ) -> Tuple[int, Optional[str]]:
         nonlocal any_failed
-        prompt = str(job["prompt"]).strip()
+        payload, outputs, effective_output_format = prepared_job
         job_label = f"[job {i}/{len(jobs)}]"
-
-        fields = _merge_non_null(base_fields, job.get("fields", {}))
-        fields = _merge_non_null(fields, {k: job.get(k) for k in base_fields.keys()})
-        augmented = _augment_prompt_fields(args.augment, prompt, fields)
-
-        payload = dict(base_payload)
-        payload["prompt"] = augmented
-        payload = _merge_non_null(payload, {k: job.get(k) for k in base_payload.keys()})
-        payload = {k: v for k, v in payload.items() if v is not None}
-
-        n = int(payload.get("n", 1))
-        _validate_generate_payload(payload)
-        effective_output_format = _normalize_output_format(payload.get("output_format"))
-        _validate_transparency(payload.get("background"), effective_output_format)
-        payload["output_format"] = effective_output_format
-        outputs = _job_output_paths(
-            out_dir=out_dir,
-            output_format=effective_output_format,
-            idx=i,
-            prompt=prompt,
-            n=n,
-            explicit_out=job.get("out"),
-        )
         try:
             async with sem:
                 print(f"{job_label} starting", file=sys.stderr)
@@ -697,7 +832,10 @@ async def _run_generate_batch(args: argparse.Namespace) -> int:
                 raise
             return i, str(exc)
 
-    tasks = [asyncio.create_task(run_job(i, job)) for i, job in enumerate(jobs, start=1)]
+    tasks = [
+        asyncio.create_task(run_job(i, prepared_job))
+        for i, prepared_job in enumerate(prepared, start=1)
+    ]
 
     try:
         await asyncio.gather(*tasks)
@@ -732,11 +870,16 @@ def _generate(args: argparse.Namespace) -> None:
         "moderation": args.moderation,
     }
     payload = {k: v for k, v in payload.items() if v is not None}
+    _validate_generate_payload(payload)
 
     output_format = _normalize_output_format(args.output_format)
     _validate_transparency(args.background, output_format)
     payload["output_format"] = output_format
     output_paths = _build_output_paths(args.out, output_format, args.n, args.out_dir)
+    _preflight_output_paths(
+        _all_output_paths(output_paths, args.downscale_max_dim, args.downscale_suffix),
+        force=args.force,
+    )
     downscaled = None
     if args.downscale_max_dim is not None:
         downscaled = [str(_derive_downscale_path(p, args.downscale_suffix)) for p in output_paths]
@@ -784,10 +927,12 @@ def _edit(args: argparse.Namespace) -> None:
     if mask_path:
         if not mask_path.exists():
             _die(f"Mask file not found: {mask_path}")
+        if not mask_path.is_file():
+            _die(f"Mask path is not a file: {mask_path}")
         if mask_path.suffix.lower() != ".png":
             _warn(f"Mask should be a PNG with an alpha channel: {mask_path}")
         if mask_path.stat().st_size > MAX_IMAGE_BYTES:
-            _warn(f"Mask exceeds 50MB limit: {mask_path}")
+            _die(f"Mask exceeds 50MB limit: {mask_path}")
 
     payload = {
         "model": args.model,
@@ -802,12 +947,19 @@ def _edit(args: argparse.Namespace) -> None:
         "moderation": args.moderation,
     }
     payload = {k: v for k, v in payload.items() if v is not None}
+    _validate_generate_payload(payload)
 
     output_format = _normalize_output_format(args.output_format)
     _validate_transparency(args.background, output_format)
     payload["output_format"] = output_format
     _validate_input_fidelity(args.input_fidelity)
     output_paths = _build_output_paths(args.out, output_format, args.n, args.out_dir)
+    protected_paths = [*image_paths, *([mask_path] if mask_path else [])]
+    _preflight_output_paths(
+        _all_output_paths(output_paths, args.downscale_max_dim, args.downscale_suffix),
+        force=args.force,
+        protected=protected_paths,
+    )
     downscaled = None
     if args.downscale_max_dim is not None:
         downscaled = [str(_derive_downscale_path(p, args.downscale_suffix)) for p in output_paths]
@@ -861,7 +1013,7 @@ def _add_shared_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output-format")
     parser.add_argument("--output-compression", type=int)
     parser.add_argument("--moderation")
-    parser.add_argument("--out", default=DEFAULT_OUTPUT_PATH)
+    parser.add_argument("--out")
     parser.add_argument("--out-dir")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -917,6 +1069,12 @@ def main() -> int:
     edit_parser.set_defaults(func=_edit)
 
     args = parser.parse_args()
+    if args.out and args.out_dir:
+        _die("Use --out or --out-dir, not both")
+    if args.command == "generate-batch" and (args.prompt or args.prompt_file or args.out):
+        _die("generate-batch reads prompts and optional output names from --input; do not use --prompt, --prompt-file, or --out")
+    if not args.out:
+        args.out = DEFAULT_OUTPUT_PATH
     if args.n < 1 or args.n > 10:
         _die("--n must be between 1 and 10")
     if getattr(args, "concurrency", 1) < 1 or getattr(args, "concurrency", 1) > 25:
@@ -927,8 +1085,10 @@ def main() -> int:
         _die("--output-compression must be between 0 and 100")
     if args.command == "generate-batch" and not args.out_dir:
         _die("generate-batch requires --out-dir")
-    if getattr(args, "downscale_max_dim", None) is not None and args.downscale_max_dim < 1:
-        _die("--downscale-max-dim must be >= 1")
+    if getattr(args, "downscale_max_dim", None) is not None:
+        if args.downscale_max_dim < 1 or args.downscale_max_dim > MAX_OUTPUT_DIMENSION:
+            _die(f"--downscale-max-dim must be between 1 and {MAX_OUTPUT_DIMENSION}")
+        _validate_downscale_suffix(args.downscale_suffix)
 
     _validate_model(args.model)
     _validate_size(args.size, args.model)

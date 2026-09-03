@@ -16,22 +16,48 @@ import { join } from 'node:path';
 // ─── Argument Parsing ──────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { url: null, maxLength: 8000, output: null, dir: null };
+  const args = { url: null, maxLength: 8000, output: null, dir: null, help: false };
+  const seen = new Set();
+  const names = new Map([
+    ['--url', 'url'],
+    ['--max-length', 'maxLength'],
+    ['--output', 'output'],
+    ['--dir', 'dir'],
+  ]);
   for (let i = 2; i < argv.length; i++) {
-    switch (argv[i]) {
-      case '--url':
-        args.url = argv[++i];
-        break;
-      case '--max-length':
-        args.maxLength = Math.min(Math.max(parseInt(argv[++i], 10) || 8000, 500), 40000);
-        break;
-      case '--output':
-        args.output = argv[++i];
-        break;
-      case '--dir':
-        args.dir = argv[++i];
-        break;
+    const argument = argv[i];
+    if (argument === '-h' || argument === '--help') {
+      if (argv.length !== 3) throw new Error('--help cannot be combined with other arguments');
+      args.help = true;
+      continue;
     }
+    if (!argument.startsWith('--')) throw new Error(`Unexpected positional argument: ${argument}`);
+    const equalAt = argument.indexOf('=');
+    const option = equalAt === -1 ? argument : argument.slice(0, equalAt);
+    const key = names.get(option);
+    if (!key) throw new Error(`Unknown option: ${option}`);
+    if (seen.has(key)) throw new Error(`Duplicate option: ${option}`);
+    const value = equalAt === -1 ? argv[i + 1] : argument.slice(equalAt + 1);
+    if (equalAt === -1) {
+      if (value === undefined || value.startsWith('--')) throw new Error(`${option} requires a value`);
+      i++;
+    }
+    if (value.trim() === '') throw new Error(`${option} requires a non-empty value`);
+    args[key] = value;
+    seen.add(key);
+  }
+  if (seen.has('maxLength')) {
+    if (!/^(?:0|[1-9]\d*)$/.test(args.maxLength)) throw new Error('--max-length must be an integer');
+    args.maxLength = Number(args.maxLength);
+    if (args.maxLength < 500 || args.maxLength > 40000) {
+      throw new Error('--max-length must be between 500 and 40000');
+    }
+  }
+  if (args.output !== null && args.output !== 'save') {
+    throw new Error('--output only supports the value "save"');
+  }
+  if (args.output === 'save' && !args.dir) {
+    throw new Error('--output save requires --dir');
   }
   return args;
 }
@@ -68,6 +94,33 @@ function truncateText(text, maxTokens, suffix = '\n...(truncated)') {
 // ─── Fetch & Extract ───────────────────────────────────────────────────────────
 
 const FETCH_TIMEOUT_MS = 30_000;
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
+
+async function readResponseText(response) {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+    throw new Error(`Response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+  }
+  if (!response.body?.getReader) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > MAX_RESPONSE_BYTES) throw new Error(`Response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+    return buffer.toString('utf8');
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error(`Response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
 
 async function fetchAndExtract(url) {
   const controller = new AbortController();
@@ -86,19 +139,23 @@ async function fetchAndExtract(url) {
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
+    const finalUrl = new URL(response.url || url);
+    if (!['http:', 'https:'].includes(finalUrl.protocol) || finalUrl.username || finalUrl.password) {
+      throw new Error('Redirect target must be an HTTP or HTTPS URL without embedded credentials');
+    }
 
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('text/html') && !contentType.includes('application/xhtml')) {
-      const text = await response.text();
-      return { title: url, content: text.slice(0, 10000), excerpt: text.slice(0, 200) };
+      const text = await readResponseText(response);
+      return { title: finalUrl.toString(), content: text.slice(0, 10000), excerpt: text.slice(0, 200) };
     }
 
-    const html = await response.text();
+    const html = await readResponseText(response);
     const { JSDOM } = await import('jsdom');
     const { Readability } = await import('@mozilla/readability');
     const TurndownService = (await import('turndown')).default;
 
-    const dom = new JSDOM(html, { url });
+    const dom = new JSDOM(html, { url: finalUrl.toString() });
     const reader = new Readability(dom.window.document);
     const article = reader.parse();
 
@@ -106,14 +163,14 @@ async function fetchAndExtract(url) {
       const body = dom.window.document.body?.innerHTML || html;
       const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
       const md = turndown.turndown(body);
-      return { title: url, content: md, excerpt: md.slice(0, 200) };
+      return { title: finalUrl.toString(), content: md, excerpt: md.slice(0, 200) };
     }
 
     const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
     const markdown = turndown.turndown(article.content);
 
     return {
-      title: article.title || url,
+      title: article.title || finalUrl.toString(),
       content: markdown,
       excerpt: article.excerpt || markdown.slice(0, 200),
     };
@@ -127,10 +184,25 @@ async function fetchAndExtract(url) {
 async function main() {
   const args = parseArgs(process.argv);
 
+  if (args.help) {
+    console.log('Usage: node cli.mjs --url <url> [--max-length N] [--output save --dir <dir>]');
+    return;
+  }
+
   if (!args.url) {
-    console.error('Error: --url is required');
-    console.error('Usage: node cli.mjs --url <url> [--max-length N] [--output save --dir <dir>]');
-    process.exit(1);
+    throw new Error('--url is required');
+  }
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(args.url);
+  } catch {
+    throw new Error('--url must be a valid HTTP or HTTPS URL');
+  }
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    throw new Error('--url must use HTTP or HTTPS');
+  }
+  if (parsedUrl.username || parsedUrl.password) {
+    throw new Error('--url must not contain embedded credentials');
   }
 
   try {
@@ -143,35 +215,36 @@ async function main() {
     const targetDir = saveDir || (autoSaveThreshold ? args.dir : null);
 
     if (targetDir) {
-      try {
-        if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
-        const ts = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
-        // Filename: data-<datetime>-<N>.md (N prevents collision)
-        let n = 1;
-        let filepath;
-        do {
-          filepath = join(targetDir, `data-${ts}-${n}.md`);
-          n++;
-        } while (existsSync(filepath));
-        writeFileSync(filepath, rawOutput, 'utf-8');
-
-        const { text: preview } = truncateText(rawOutput, 800, '...');
-        const summary = [
-          `[WebFetch Saved] ${filepath}`,
-          `URL: ${args.url}`,
-          `Title: ${article.title}`,
-          `Size: ${rawOutput.length} chars`,
-          '',
-          'Preview:',
-          preview,
-          '',
-          `Hint: read("${filepath}", offset, limit) to view full content`,
-        ].join('\n');
-        console.log(summary);
-        return;
-      } catch {
-        // Fall through to direct output
+      if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
+      // Filename: data-<datetime>-<N>.md (N prevents collision)
+      let n = 1;
+      let filepath;
+      while (true) {
+        filepath = join(targetDir, `data-${ts}-${n}.md`);
+        n++;
+        try {
+          writeFileSync(filepath, rawOutput, { encoding: 'utf-8', flag: 'wx' });
+          break;
+        } catch (error) {
+          if (error?.code !== 'EEXIST') throw error;
+        }
       }
+
+      const { text: preview } = truncateText(rawOutput, 800, '...');
+      const summary = [
+        `[WebFetch Saved] ${filepath}`,
+        `URL: ${args.url}`,
+        `Title: ${article.title}`,
+        `Size: ${rawOutput.length} chars`,
+        '',
+        'Preview:',
+        preview,
+        '',
+        `Hint: read("${filepath}", offset, limit) to view full content`,
+      ].join('\n');
+      console.log(summary);
+      return;
     }
 
     // Direct output with optional truncation
@@ -180,8 +253,12 @@ async function main() {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Fetch error: ${message}`);
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
-main();
+main().catch((err) => {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`Error: ${message}`);
+  process.exitCode = 1;
+});

@@ -7,15 +7,26 @@ description: >
   Triggers: GDP, CPI, unemployment, federal funds rate, options chain, Greeks, treasury yield,
   economic calendar, stock index, forex, commodity, gold, crude oil.
   NOT for: China A-shares (use hedgehog-company-index-data).
-version: 1.1.0
+version: 1.1.2
 ---
 
 # Global Financial Data Query (OpenBB Platform)
 
 
-## Windows command compatibility
+## Portable CLI parameters
 
-On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+When a documented CLI accepts a parameter object, use the same rule on every Agent and operating system; existing positional file inputs remain positional:
+
+1. When every business value is a non-empty, single-line `string | finite number | boolean`, pass it as a named argument (`--key value` or `--key=value`). Names are case-sensitive and are not normalized.
+2. When any value is an object, array, `null`, multiline text, a numeric/boolean-looking string that must remain a string, or contains difficult quoting, write the complete parameter object as UTF-8 JSON and pass the file option documented by this Skill.
+3. Agent-created parameter files must have a unique basename matching `tmp-<skill-name>-<unique-id>.json`, must not use the reserved `.hedgehog/` directory, and must be removed after the call when no longer needed. UTF-8 BOM is accepted.
+4. Do not inline nested JSON or combine flat arguments with a JSON/file payload. Create JSON with the Agent's file-writing capability, not `echo`, a shell heredoc, or PowerShell string assembly.
+
+POSIX/Git Bash form: `node '<script>' --key 'single-line value'` or `node '<script>' <file-option> '<workspace>/tmp-<skill-name>-<id>.json'`.
+
+PowerShell form: `node "<script>" --key "single-line value"` or `node "<script>" <file-option> "<workspace>\\tmp-<skill-name>-<id>.json"`.
+
+On Windows, use PowerShell or a verified Git for Windows Bash; `cmd.exe` is unsupported. Keep each command on one physical line. The process runs with the current Agent user's permissions and that Agent's native sandbox; HogAgent marks its Windows shell as `UNSANDBOXED`.
 
 A global financial data query skill based on [OpenBB Platform](https://github.com/OpenBB-finance/OpenBB).
 Covers macroeconomics, options chains, global indices, forex, commodities, and more. **Does not support China A-share market data.**
@@ -121,7 +132,7 @@ The OpenBB API service (`openbb-api`) is a Python process, **automatically manag
 
 - **Auto-start**: On first `call_api.js` invocation, if the service is not running, it will be started automatically
 - **Auto-shutdown**: After the last call, if no new requests within 30 minutes (configurable), it terminates automatically
-- **State files** (auto-created in skill root directory, hidden with `.` prefix):
+- **State files** (auto-created under the user-writable `~/.hogagent/runtime/hog-openbb/` directory by default; override with `HOG_OPENBB_RUNTIME_DIR`):
   - `.openbb_server.pid` — Service process PID
   - `.openbb_watchdog.pid` — Watchdog process PID
   - `.openbb_last_used` — Last call timestamp
@@ -141,11 +152,11 @@ node scripts/server_manager.js status   # View running status (JSON output)
 **Unified invocation**:
 
 ```bash
-node scripts/call_api.js --api <api-name> --params '<JSON-string>'
-node scripts/call_api.js --api <api-name> --params-file <params.json>
+node scripts/call_api.js --api getMacroIndicators --provider fred
+node scripts/call_api.js --api <api-name> --params-file '<workspace>/tmp-hog-openbb-<id>.json'
 ```
 
-Use `--params` for short, simple JSON. Use `--params-file` for long, nested, generated, or quote-heavy UTF-8 JSON; the two options are mutually exclusive.
+Use named arguments when all business values are safe top-level scalars. For objects, arrays, `null`, multiline text, or difficult quoting, write a unique UTF-8 `tmp-*.json` and use `--params-file`. Never inline nested JSON or mix payload sources; `--params` is compatibility-only.
 
 **Common parameter `fields`**: All Tools support a `fields` parameter (type `string[]`) to trim response fields and save tokens.
 
@@ -335,3 +346,7 @@ Use `--params` for short, simple JSON. Use `--params-file` for long, nested, gen
 
 > Resolve `./scripts/*` to absolute paths using this SKILL.md's directory (shown in system prompt `available_skills`).
 > Output is JSON to stdout; redirect to session task dir if needed.
+
+## Execution safety
+
+Parameter files are limited to 10 MiB, request URLs to 65,536 characters, and responses to 20 MiB; API requests time out after 30 seconds. Local process management is restricted to an `http://` loopback endpoint, uses argument-array spawning without a shell, serializes concurrent startup attempts, and never signals a recorded PID unless the configured health endpoint confirms the expected service. Remote OpenBB URLs are queried but never used to start a local process.

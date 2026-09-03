@@ -1,6 +1,6 @@
 {
   "name": "math_calc",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "description": "Safe mathematical expression evaluator CLI skill",
   "type": "module",
   "main": "cli.mjs",

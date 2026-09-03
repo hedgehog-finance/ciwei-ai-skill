@@ -6,7 +6,7 @@ description: >
   Best for: cross-content financial information search, news, research reports, announcements.
   NOT for: stock quotes, fundamentals, financial statements, Shenwan industry data.
   Triggers: financial information search, financial news, stock news, breaking news, research report, company announcement, financial report.
-version: 1.9.0
+version: 1.9.2
 metadata:
   hermes:
     tags: [finance, news, research-reports]
@@ -23,9 +23,20 @@ required_environment_variables:
 # 财经资讯数据
 
 
-## Windows command compatibility
+## Portable CLI parameters
 
-On Windows, use PowerShell or an installed Bash; `cmd.exe` is not supported. Keep every command example on one physical line. When a command accepts a simple inline JSON argument, wrap the complete JSON value in single quotes. If that JSON contains a single quote, use platform-specific escaping: in Bash replace it with `'\''`; in PowerShell replace it with `''`. For long, deeply nested, or generated JSON, write UTF-8 JSON to a parameter file and use the file option documented by that command.
+When a documented CLI accepts a parameter object, use the same rule on every Agent and operating system; existing positional file inputs remain positional:
+
+1. When every business value is a non-empty, single-line `string | finite number | boolean`, pass it as a named argument (`--key value` or `--key=value`). Names are case-sensitive and are not normalized.
+2. When any value is an object, array, `null`, multiline text, a numeric/boolean-looking string that must remain a string, or contains difficult quoting, write the complete parameter object as UTF-8 JSON and pass the file option documented by this Skill.
+3. Agent-created parameter files must have a unique basename matching `tmp-<skill-name>-<unique-id>.json`, must not use the reserved `.hedgehog/` directory, and must be removed after the call when no longer needed. UTF-8 BOM is accepted.
+4. Do not inline nested JSON or combine flat arguments with a JSON/file payload. Create JSON with the Agent's file-writing capability, not `echo`, a shell heredoc, or PowerShell string assembly.
+
+POSIX/Git Bash form: `node '<script>' --key 'single-line value'` or `node '<script>' <file-option> '<workspace>/tmp-<skill-name>-<id>.json'`.
+
+PowerShell form: `node "<script>" --key "single-line value"` or `node "<script>" <file-option> "<workspace>\\tmp-<skill-name>-<id>.json"`.
+
+On Windows, use PowerShell or a verified Git for Windows Bash; `cmd.exe` is unsupported. Keep each command on one physical line. The process runs with the current Agent user's permissions and that Agent's native sandbox; HogAgent marks its Windows shell as `UNSANDBOXED`.
 
 本 skill 通过接口统一搜索或分类查询财经快讯、新闻、研报以及上市公司公告。
 
@@ -55,9 +66,11 @@ hermes config set CIWEIAI_API_KEY "your-api-key-here"
 也可在启动 Hermes 前设置同名进程环境变量。脚本优先读取 `CIWEIAI_API_KEY`，并保留 `API_KEY` 作为非 Hermes 环境的兼容兜底。
 
 **执行方法**：
-`node ${HERMES_SKILL_DIR}/scripts/call_api.js --api <接口名> --params '<JSON>' --dir <sessionTaskDir>`
+`node ${HERMES_SKILL_DIR}/scripts/call_api.js --api searchInformation --keyword "贵州茅台近一周重要资讯" --limit 20 --dir '<sessionTaskDir>'`
 
-复杂 JSON 改用：`node ${HERMES_SKILL_DIR}/scripts/call_api.js --api <接口名> --params-file <params.json> --dir <sessionTaskDir>`。简单参数使用 `--params`；长、深层嵌套、自动生成或引号较多的 UTF-8 JSON 使用 `--params-file`，两者不能同时使用。
+复杂参数：`node ${HERMES_SKILL_DIR}/scripts/call_api.js --api <接口名> --params-file '<sessionTaskDir>/tmp-hedgehog-news-reports-<id>.json' --dir '<sessionTaskDir>'`
+
+业务参数全部为安全顶层标量时，Agent 直接使用命名参数；出现对象、数组、`null`、多行文本或复杂引号时，才写入唯一的 `tmp-*.json` 并使用 `--params-file`。不得内联嵌套 JSON 或混用载荷入口；`--params` 仅为兼容入口。
 
 **输出策略（脚本自动决定）**：
 - 所有接口均自动保存为 `data-*.json`，stdout 仅输出文件指针
@@ -89,7 +102,7 @@ hermes config set CIWEIAI_API_KEY "your-api-key-here"
 ### Tool-1: queryFlashNewsList (查询快讯列表)
 **适用场景**：获取最近快讯列表。
 **典型调用指南**：查询最近一天的快讯：参数 start_time:[一天前的时间]
-**典型调用**：`node ${HERMES_SKILL_DIR}/scripts/call_api.js --api queryFlashNewsList --params '{"start_time":"2024-06-01 00:00:00"}' --dir <sessionTaskDir>`
+**典型调用**：先将 `{"start_time":"2024-06-01 00:00:00"}` 写入 `<sessionTaskDir>/tmp-hedgehog-news-reports-<id>.json`，再执行 `node ${HERMES_SKILL_DIR}/scripts/call_api.js --api queryFlashNewsList --params-file '<sessionTaskDir>/tmp-hedgehog-news-reports-<id>.json' --dir '<sessionTaskDir>'`
 
 **输入参数 `params`：**
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
@@ -261,7 +274,7 @@ hermes config set CIWEIAI_API_KEY "your-api-key-here"
 ### Tool-8: searchInformation (统一搜索新闻、研报和公告)
 **适用场景**：用户只提供一个主题、公司或事件，未限定信息类型；或需要在新闻、研报和公告中一次搜索并按相关性混排。若用户明确要求日期、类型、标签或评分筛选，改用对应分类列表 Tool。
 
-**典型调用**：`node ${HERMES_SKILL_DIR}/scripts/call_api.js --api searchInformation --params '{"keyword":"人工智能产业链"}' --dir <sessionTaskDir>`
+**典型调用**：先将 `{"keyword":"人工智能产业链"}` 写入 `<sessionTaskDir>/tmp-hedgehog-news-reports-<id>.json`，再执行 `node ${HERMES_SKILL_DIR}/scripts/call_api.js --api searchInformation --params-file '<sessionTaskDir>/tmp-hedgehog-news-reports-<id>.json' --dir '<sessionTaskDir>'`
 
 **输入参数 `params`：**
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
@@ -278,3 +291,7 @@ hermes config set CIWEIAI_API_KEY "your-api-key-here"
 | HTTP 4xx | 检查参数格式与路径参数 |
 | HTTP 5xx | 提示用户服务端错误，建议稍后重试 |
 | 连接失败 | 提示检查 api.ciweiai.com 可达性 |
+
+## 执行安全边界
+
+参数文件最大 10 MiB，请求 URL 最大 65,536 字符，请求体最大 10 MiB，响应最大 20 MiB，网络请求 30 秒超时。配置损坏、参数冲突、非法响应和超限数据均明确失败；落盘结果先写同目录临时文件，成功后再原子替换目标。

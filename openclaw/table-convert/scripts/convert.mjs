@@ -4,15 +4,64 @@
  * Usage: node convert.mjs <input> <output> [--format=json|markdown] [--sheet=<name|index>]
  */
 
-import { existsSync, writeFileSync } from "node:fs";
-import { extname } from "node:path";
+import { existsSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import XLSX from "xlsx";
 import { markdownTable } from "markdown-table";
 
 // ─── Parse CLI args ─────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
-const inputPath = args[0];
-const outputPath = args[1];
+if (args.length === 1 && ["-h", "--help"].includes(args[0])) {
+  console.log("Usage: convert.mjs <input> <output> [--format=json|markdown] [--sheet=<name|index>]");
+  process.exit(0);
+}
+const positionals = [];
+const options = {};
+
+for (let i = 0; i < args.length; i++) {
+  const argument = args[i];
+  if (!argument.startsWith("--")) {
+    positionals.push(argument);
+    continue;
+  }
+
+  const separator = argument.indexOf("=");
+  const name = argument.slice(2, separator === -1 ? undefined : separator);
+  if (!new Set(["format", "sheet"]).has(name)) {
+    console.error(`Error: unknown option --${name || argument}`);
+    process.exit(1);
+  }
+  if (Object.prototype.hasOwnProperty.call(options, name)) {
+    console.error(`Error: duplicate option --${name}`);
+    process.exit(1);
+  }
+  const value = separator === -1 ? args[i + 1] : argument.slice(separator + 1);
+  if (separator === -1) {
+    if (value === undefined || value.startsWith("--")) {
+      console.error(`Error: --${name} requires a value`);
+      process.exit(1);
+    }
+    i++;
+  }
+  if (value.trim() === "") {
+    console.error(`Error: --${name} requires a non-empty value`);
+    process.exit(1);
+  }
+  options[name] = value;
+}
+
+if (positionals.length > 2) {
+  console.error(`Error: unexpected positional argument: ${positionals[2]}`);
+  process.exit(1);
+}
+
+const inputPath = positionals[0];
+const outputPath = positionals[1];
+
+if (inputPath && outputPath && resolve(inputPath) === resolve(outputPath)) {
+  console.error("Error: input and output paths must be different");
+  process.exit(1);
+}
 
 if (!inputPath) {
   console.error("Usage: convert.mjs <input> <output> [--format=json|markdown] [--sheet=<name|index>]");
@@ -25,17 +74,26 @@ if (!inputPath) {
 }
 
 // ─── Resolve options ────────────────────────────────────────────────────────
-const formatArg = args.find(a => a.startsWith("--format="));
-const sheetArg = args.find(a => a.startsWith("--sheet="));
-const format = formatArg ? formatArg.split("=")[1].toLowerCase() : "json";
+const format = options.format ? options.format.toLowerCase() : "json";
+const sheetOption = options.sheet;
 
 if (!["json", "markdown"].includes(format)) {
   console.error(`Error: unsupported format "${format}". Use json or markdown.`);
   process.exit(1);
 }
 
+if (sheetOption !== "list" && !outputPath) {
+  console.error("Error: <output> path is required unless --sheet=list is used.");
+  process.exit(1);
+}
+
 if (!existsSync(inputPath)) {
   console.error(`Error: input file not found: ${inputPath}`);
+  process.exit(1);
+}
+const inputStat = statSync(inputPath);
+if (!inputStat.isFile() || inputStat.size > 100 * 1024 * 1024) {
+  console.error("Error: input must be a regular spreadsheet file no larger than 100MB");
   process.exit(1);
 }
 
@@ -46,20 +104,35 @@ if (![".xlsx", ".xls", ".csv"].includes(ext)) {
 }
 
 // ─── Read workbook ──────────────────────────────────────────────────────────
-const workbook = XLSX.readFile(inputPath);
+let workbook;
+try {
+  workbook = XLSX.readFile(inputPath);
+} catch (error) {
+  console.error(`Error: unable to read workbook: ${error.message}`);
+  process.exit(1);
+}
+if (workbook.SheetNames.length === 0) {
+  console.error("Error: workbook contains no sheets");
+  process.exit(1);
+}
 
 // Handle --sheet=list
-if (sheetArg && sheetArg.split("=")[1] === "list") {
+if (sheetOption === "list") {
+  if (outputPath || options.format !== undefined) {
+    console.error("Error: --sheet=list cannot be combined with an output path or --format");
+    process.exit(1);
+  }
   console.log(JSON.stringify(workbook.SheetNames));
   process.exit(0);
 }
 
 // Resolve target sheet
 let sheetName;
-if (sheetArg) {
-  const sheetVal = sheetArg.split("=")[1];
-  const idx = Number(sheetVal);
-  if (!Number.isNaN(idx) && Number.isInteger(idx)) {
+if (sheetOption !== undefined) {
+  const sheetVal = sheetOption;
+  const isCanonicalIndex = /^(?:0|[1-9]\d*)$/.test(sheetVal);
+  const idx = isCanonicalIndex ? Number(sheetVal) : NaN;
+  if (isCanonicalIndex && Number.isSafeInteger(idx)) {
     if (idx >= 0 && idx < workbook.SheetNames.length) {
       sheetName = workbook.SheetNames[idx];
     } else if (workbook.Sheets[sheetVal]) {
@@ -86,11 +159,6 @@ const sheet = workbook.Sheets[sheetName];
 // ─── Convert ────────────────────────────────────────────────────────────────
 const jsonRows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
 
-if (!outputPath) {
-  console.error("Error: <output> path is required.");
-  process.exit(1);
-}
-
 let outputContent;
 
 if (format === "json") {
@@ -106,7 +174,18 @@ if (format === "json") {
   }
 }
 
-writeFileSync(outputPath, outputContent, "utf-8");
+try {
+  const tempPath = join(dirname(outputPath), `.${basename(outputPath)}.${process.pid}.${Date.now()}.tmp`);
+  try {
+    writeFileSync(tempPath, outputContent, { encoding: "utf-8", flag: "wx" });
+    renameSync(tempPath, outputPath);
+  } finally {
+    try { unlinkSync(tempPath); } catch { /* already renamed or never created */ }
+  }
+} catch (error) {
+  console.error(`Error: unable to write output: ${error.message}`);
+  process.exit(1);
+}
 
 const rowCount = jsonRows.length;
 console.log(`Converted: ${inputPath} [sheet: ${sheetName}] -> ${outputPath} (${format}, ${rowCount} rows)`);

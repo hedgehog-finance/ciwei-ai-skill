@@ -3,12 +3,13 @@
  * Tech-Indicators — 本地技术指标计算引擎
  * Usage: node calc.mjs <data.json> <output> [options]
  *
- * 输入: JSON 数组 [{open, high, low, close, volume?, date?}, ...]
+ * 输入: JSON 数组 [{open, high, low, close, volume, date?}, ...]
  * 输出: 追加指标列的 JSON 或 Markdown 表格
  */
 
 import { createRequire } from "node:module";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { markdownTable } from "markdown-table";
 
 const require = createRequire(import.meta.url);
@@ -16,19 +17,6 @@ const FTI = require("fast-technical-indicators");
 
 // ─── CLI ────────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
-const inputPath = args[0];
-const outputPath = args[1];
-
-if (!inputPath) {
-  console.error("Usage: calc.mjs <data.json> <output> [options]");
-  console.error("");
-  console.error("Options:");
-  console.error("  --indicators=sma,ema,rsi,...   逗号分隔指标名（默认: sma,ema,rsi,macd,bollingerbands）");
-  console.error("  --params=<file.json>            自定义参数覆盖（可选）");
-  console.error("  --format=json|markdown          输出格式（默认: json）");
-  console.error("  --list                          列出所有支持的指标名称");
-  process.exit(1);
-}
 
 // ─── 指标注册表 ─────────────────────────────────────────────────────────────
 
@@ -73,8 +61,6 @@ const VALUE_INDICATORS = {
                  }),
   dpo:           (v, p) => FTI.dpo({ values: v, period: p.period ?? 21 }),
   linearregression:(v, p) => FTI.linearregression({ values: v, period: p.period ?? 14 }),
-  cci:           (v, p) => FTI.cci({ high: [], low: [], close: [], period: p.period ?? 20 }),
-  // cci 需要 OHLC，放到 OHLC 组
   stochasticrsi: (v, p) => FTI.stochasticrsi({
                    values: v,
                    rsiPeriod: p.rsiPeriod ?? 14,
@@ -88,21 +74,12 @@ const VALUE_INDICATORS = {
                    type: p.type ?? "SMA",
                    deviation: p.deviation ?? 0.025,
                  }),
-  ultimateoscillator:(v, p) => FTI.ultimateoscillator({
-                   high: [], low: [], close: [],
-                   shortPeriod: p.shortPeriod ?? 7,
-                   mediumPeriod: p.mediumPeriod ?? 14,
-                   longPeriod: p.longPeriod ?? 28,
-                 }),
   priceoscillator:(v, p) => FTI.priceoscillator({
                    values: v,
                    fastPeriod: p.fastPeriod ?? 10,
                    slowPeriod: p.slowPeriod ?? 21,
                  }),
-  fibonacci:     (v, p) => FTI.fibonacci({ high: Math.max(...v), low: Math.min(...v), period: p.period ?? 200 }),
-  renko:         (v, p) => FTI.renko({ values: v, fixedBrickSize: p.fixedBrickSize ?? 2 }),
   volatilityindex:(v, p) => FTI.volatilityindex({ values: v, period: p.period ?? 14 }),
-  heikinashi:    null, // 特殊处理：需要 OHLC 结构
 };
 
 /** OHLC 指标: (data, params) => object[]|number[] */
@@ -242,10 +219,67 @@ const PATTERN_INDICATORS = {
 };
 
 // ─── 列出所有指标 ────────────────────────────────────────────────────────────
-const listArg = args.find(a => a === "--list");
-if (listArg) {
+function failUsage(message, code = 1) {
+  if (message) console.error(`Error: ${message}`);
+  console.error("Usage: calc.mjs <data.json> <output> [options]");
+  console.error("");
+  console.error("Options:");
+  console.error("  --indicators sma,ema,rsi,...   逗号分隔指标名（默认: sma,ema,rsi,macd,bollingerbands）");
+  console.error("  --params-file <tmp-tech-indicators-*.json>  自定义参数覆盖");
+  console.error("  --params <file>                 --params-file 的兼容别名");
+  console.error("  --format json|markdown          输出格式（默认: json）");
+  console.error("  --list                          列出所有支持的指标名称");
+  process.exit(code);
+}
+
+function parseCli(argv) {
+  const positionals = [];
+  const options = {};
+  const valueOptions = new Set(["indicators", "params-file", "params", "format"]);
+  for (let i = 0; i < argv.length; i++) {
+    const argument = argv[i];
+    if (argument === "-h" || argument === "--help") {
+      if (argv.length !== 1) failUsage("--help cannot be combined with other arguments");
+      return { positionals, options: { help: true } };
+    }
+    if (!argument.startsWith("--")) {
+      positionals.push(argument);
+      continue;
+    }
+    const separator = argument.indexOf("=");
+    const name = argument.slice(2, separator === -1 ? undefined : separator);
+    if (name === "list") {
+      if (separator !== -1) failUsage("--list 不接受参数值");
+      if (Object.prototype.hasOwnProperty.call(options, name)) failUsage("参数重复: --list");
+      options.list = true;
+      continue;
+    }
+    if (!valueOptions.has(name)) failUsage(`未知参数: --${name || argument}`);
+    if (Object.prototype.hasOwnProperty.call(options, name)) failUsage(`参数重复: --${name}`);
+    const value = separator === -1 ? argv[i + 1] : argument.slice(separator + 1);
+    if (separator === -1) {
+      if (value === undefined || value.startsWith("--")) failUsage(`--${name} 需要参数值`);
+      i++;
+    }
+    if (value.trim() === "") failUsage(`--${name} 需要非空参数值`);
+    options[name] = value;
+  }
+  if (options.params !== undefined && options["params-file"] !== undefined) {
+    failUsage("--params 与 --params-file 不能混用");
+  }
+  return { positionals, options };
+}
+
+const { positionals, options } = parseCli(args);
+
+if (options.help) {
+  failUsage(undefined, 0);
+}
+
+if (options.list) {
+  if (positionals.length > 0 || Object.keys(options).length > 1) failUsage("--list 不能与其他参数混用");
   const all = [
-    ...Object.keys(VALUE_INDICATORS).filter(k => k !== "cci" && k !== "ultimateoscillator" && k !== "fibonacci" && k !== "heikinashi"),
+    ...Object.keys(VALUE_INDICATORS),
     ...Object.keys(OHLC_INDICATORS),
     ...Object.keys(PATTERN_INDICATORS),
   ];
@@ -254,11 +288,19 @@ if (listArg) {
   process.exit(0);
 }
 
+if (positionals.length !== 2) {
+  failUsage(positionals.length < 2 ? "必须提供 <data.json> 和 <output>" : `多余的位置参数: ${positionals[2]}`);
+}
+
+const [inputPath, outputPath] = positionals;
+if (resolve(inputPath) === resolve(outputPath)) {
+  console.error("Error: input and output paths must be different");
+  process.exit(1);
+}
+
 // ─── 解析选项 ────────────────────────────────────────────────────────────────
-const indArg = args.find(a => a.startsWith("--indicators="));
-const paramsArg = args.find(a => a.startsWith("--params="));
-const formatArg = args.find(a => a.startsWith("--format="));
-const format = formatArg ? formatArg.split("=")[1].toLowerCase() : "json";
+const paramsFile = options["params-file"] ?? options.params;
+const format = options.format ? options.format.toLowerCase() : "json";
 
 if (!["json", "markdown"].includes(format)) {
   console.error(`Error: 不支持的格式 "${format}"，可选: json, markdown`);
@@ -269,23 +311,93 @@ if (!existsSync(inputPath)) {
   console.error(`Error: 文件不存在: ${inputPath}`);
   process.exit(1);
 }
+const inputStat = statSync(inputPath);
+if (!inputStat.isFile() || inputStat.size > 100 * 1024 * 1024) {
+  console.error("Error: input must be a regular JSON file no larger than 100MB");
+  process.exit(1);
+}
 
 // ─── 读取数据 ────────────────────────────────────────────────────────────────
-const rawData = JSON.parse(readFileSync(inputPath, "utf-8"));
+let rawData;
+try {
+  rawData = JSON.parse(readFileSync(inputPath, "utf-8").replace(/^\uFEFF/, ""));
+} catch (error) {
+  console.error(`Error: 无法读取或解析输入 JSON "${inputPath}": ${error.message}`);
+  process.exit(1);
+}
 if (!Array.isArray(rawData) || rawData.length === 0) {
   console.error("Error: 输入必须是 JSON 数组且至少包含 1 条数据");
   process.exit(1);
 }
+if (rawData.length > 1_000_000) {
+  console.error("Error: input exceeds the 1,000,000 record limit");
+  process.exit(1);
+}
+if (rawData.some((row) => !row || typeof row !== "object" || Array.isArray(row))) {
+  console.error("Error: 输入数组中的每一项都必须是 JSON 对象");
+  process.exit(1);
+}
+
+// 日期标准化：20240102 / 2024/01/02 → 2024-01-02，便于后续图表使用时间轴
+function normalizeDate(value) {
+  if (value == null) return "";
+  const text = String(value).trim();
+  let match = text.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+  match = text.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (match) return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+  return text;
+}
 
 // 标准化字段名
-const data = rawData.map(row => ({
-  date:   row.date ?? row.time ?? row.timestamp ?? "",
-  open:   Number(row.open ?? row.Open ?? 0),
-  high:   Number(row.high ?? row.High ?? 0),
-  low:    Number(row.low ?? row.Low ?? 0),
-  close:  Number(row.close ?? row.Close ?? 0),
-  volume: Number(row.volume ?? row.Volume ?? 0),
+function requiredNumber(row, aliases, rowIndex, field) {
+  const raw = aliases.map((alias) => row[alias]).find((value) => value !== undefined && value !== null
+    && (typeof value !== "string" || value.trim() !== ""));
+  if (raw === undefined) {
+    console.error(`Error: 输入第 ${rowIndex + 1} 行缺少必需的 OHLCV 字段 "${field}"`);
+    process.exit(1);
+  }
+  const value = Number(raw);
+  if (typeof raw === "boolean" || typeof raw === "object" || !Number.isFinite(value)) {
+    console.error(`Error: 输入第 ${rowIndex + 1} 行字段 "${field}" 必须是有限数字`);
+    process.exit(1);
+  }
+  return value;
+}
+
+const data = rawData.map((row, rowIndex) => ({
+  date:   normalizeDate(row.date ?? row.trade_date ?? row.time ?? row.timestamp ?? row.Date ?? row.datetime ?? ""),
+  open:   requiredNumber(row, ["open", "Open"], rowIndex, "open"),
+  high:   requiredNumber(row, ["high", "High"], rowIndex, "high"),
+  low:    requiredNumber(row, ["low", "Low"], rowIndex, "low"),
+  close:  requiredNumber(row, ["close", "Close"], rowIndex, "close"),
+  volume: requiredNumber(row, ["volume", "Volume", "vol", "Vol"], rowIndex, "volume"),
 }));
+for (const [rowIndex, row] of data.entries()) {
+  if (row.high < row.low || row.high < row.open || row.high < row.close || row.low > row.open || row.low > row.close) {
+    console.error(`Error: input row ${rowIndex + 1} has inconsistent OHLC values`);
+    process.exit(1);
+  }
+  if (row.volume < 0) {
+    console.error(`Error: input row ${rowIndex + 1} volume must be non-negative`);
+    process.exit(1);
+  }
+}
+
+// 全部记录都没有日期时生成序号，避免输出空的横轴字段
+if (data.every((row) => !row.date)) {
+  data.forEach((row, index) => { row.date = index + 1; });
+}
+
+// EMA/MACD 等递归指标依赖升序行情；常见行情 API 返回倒序数据时自动纠正
+{
+  const dated = data.filter((row) => typeof row.date === "string" && row.date
+    && Number.isFinite(Date.parse(row.date)));
+  if (dated.length >= 2 && Date.parse(dated[0].date) > Date.parse(dated[dated.length - 1].date)) {
+    data.reverse();
+    console.error("Warning: 检测到日期倒序，已按升序重排后计算指标");
+  }
+}
 
 // 提取数组
 const closeArr = data.map(d => d.close);
@@ -299,29 +411,62 @@ const candles = data.map(d => ({ open: d.open, high: d.high, low: d.low, close: 
 
 // ─── 加载自定义参数 ─────────────────────────────────────────────────────────
 let customParams = {};
-if (paramsArg) {
-  const pFile = paramsArg.split("=")[1];
-  if (existsSync(pFile)) {
-    customParams = JSON.parse(readFileSync(pFile, "utf-8"));
-  } else {
-    console.error(`Warning: params file not found: ${pFile}`);
+if (paramsFile) {
+  try {
+    const paramsStat = statSync(paramsFile);
+    if (!paramsStat.isFile() || paramsStat.size > 10 * 1024 * 1024) throw new Error("parameter file must be a regular file no larger than 10MB");
+    customParams = JSON.parse(readFileSync(paramsFile, "utf-8").replace(/^\uFEFF/, ""));
+  } catch (error) {
+    console.error(`Error: 无法读取或解析参数文件 "${paramsFile}": ${error.message}`);
+    process.exit(1);
+  }
+  if (!customParams || typeof customParams !== "object" || Array.isArray(customParams)) {
+    console.error("Error: 参数文件必须包含 JSON 对象");
+    process.exit(1);
+  }
+  for (const [name, value] of Object.entries(customParams)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      console.error(`Error: 指标参数 "${name}" 必须是 JSON 对象`);
+      process.exit(1);
+    }
+    for (const [key, parameter] of Object.entries(value)) {
+      const scalar = typeof parameter === "string" || typeof parameter === "boolean"
+        || (typeof parameter === "number" && Number.isFinite(parameter));
+      if (!key || !scalar || (typeof parameter === "string" && (!parameter.trim() || /[\r\n]/.test(parameter)))) {
+        console.error(`Error: parameter override "${name}.${key}" must be a non-empty, single-line finite scalar`);
+        process.exit(1);
+      }
+      if (/period/i.test(key) && (!Number.isInteger(parameter) || parameter < 1 || parameter > 1_000_000)) {
+        console.error(`Error: parameter override "${name}.${key}" must be an integer from 1 through 1000000`);
+        process.exit(1);
+      }
+    }
   }
 }
 
 // ─── 解析指标列表 ────────────────────────────────────────────────────────────
 const DEFAULT_INDICATORS = ["sma", "ema", "rsi", "macd", "bollingerbands"];
-const requestedNames = indArg
-  ? indArg.split("=")[1].split(",").map(s => s.trim().toLowerCase())
+const requestedNames = options.indicators
+  ? options.indicators.split(",").map(s => s.trim().toLowerCase()).filter(Boolean)
   : DEFAULT_INDICATORS;
 
 // 处理 "all" 快捷方式
 const ALL_NAMES = [
-  ...Object.keys(VALUE_INDICATORS).filter(k => k !== "cci" && k !== "ultimateoscillator" && k !== "fibonacci" && k !== "heikinashi"),
+  ...Object.keys(VALUE_INDICATORS),
   ...Object.keys(OHLC_INDICATORS),
   ...Object.keys(PATTERN_INDICATORS),
 ];
 const allUnique = [...new Set(ALL_NAMES)];
+if (requestedNames.length === 0) failUsage("--indicators 至少需要一个指标名");
+if (new Set(requestedNames).size !== requestedNames.length) failUsage("--indicators 包含重复指标名");
+if (requestedNames.includes("all") && requestedNames.length > 1) failUsage("--indicators=all 不能与其他指标混用");
+const unknownNames = requestedNames.filter((name) => name !== "all" && !allUnique.includes(name));
+if (unknownNames.length > 0) failUsage(`未知指标: ${unknownNames.join(", ")}`);
 const finalNames = requestedNames.includes("all") ? allUnique : requestedNames;
+const unknownParamNames = Object.keys(customParams).filter((name) => !allUnique.includes(name));
+if (unknownParamNames.length > 0) failUsage(`参数文件包含未知指标: ${unknownParamNames.join(", ")}`);
+const unusedParamNames = Object.keys(customParams).filter((name) => !finalNames.includes(name));
+if (unusedParamNames.length > 0) failUsage(`参数文件包含未请求指标的覆盖参数: ${unusedParamNames.join(", ")}`);
 
 // ─── 计算指标 ────────────────────────────────────────────────────────────────
 const resultRows = data.map(d => ({ date: d.date, open: d.open, high: d.high, low: d.low, close: d.close, volume: d.volume }));
@@ -358,7 +503,7 @@ for (const name of finalNames) {
   }
 
   // 3) 简单收盘价指标
-  if (VALUE_INDICATORS[name] && name !== "cci" && name !== "ultimateoscillator" && name !== "fibonacci" && name !== "heikinashi") {
+  if (VALUE_INDICATORS[name]) {
     try {
       const res = VALUE_INDICATORS[name](closeArr, params);
       applyResult(resultRows, name, res);
@@ -379,21 +524,34 @@ function applyResult(rows, name, res) {
   // 结果可能是 number[] 或 object[]
   const first = res[0];
   if (typeof first === "number" || first === null) {
+    if (res.some((value) => typeof value === "number" && !Number.isFinite(value))) {
+      throw new Error("calculation returned a non-finite number");
+    }
     // number[] — 前 N 个元素可能缺失（前导 null）
     const offset = rows.length - res.length;
     for (let i = 0; i < rows.length; i++) {
       const idx = i - offset;
-      rows[i][name] = idx >= 0 && idx < res.length ? res[idx] : null;
+      const value = idx >= 0 && idx < res.length ? res[idx] : null;
+      rows[i][name] = value;
     }
   } else if (typeof first === "object" && first !== null) {
     // object[] — 展开字段，如 {MACD, signal, histogram}
     const keys = Object.keys(first);
+    for (const item of res) {
+      if (!item || typeof item !== "object") continue;
+      for (const key of keys) {
+        if (typeof item[key] === "number" && !Number.isFinite(item[key])) {
+          throw new Error(`calculation field ${key} returned a non-finite number`);
+        }
+      }
+    }
     const offset = rows.length - res.length;
     for (let i = 0; i < rows.length; i++) {
       const idx = i - offset;
       if (idx >= 0 && idx < res.length && res[idx]) {
         for (const k of keys) {
-          rows[i][`${name}_${k}`] = res[idx][k] ?? null;
+          const value = res[idx][k] ?? null;
+          rows[i][`${name}_${k}`] = value;
         }
       } else {
         for (const k of keys) {
@@ -405,11 +563,6 @@ function applyResult(rows, name, res) {
 }
 
 // ─── 输出 ────────────────────────────────────────────────────────────────────
-if (!outputPath) {
-  console.error("Error: 需要指定 <output> 路径");
-  process.exit(1);
-}
-
 let outputContent;
 
 if (format === "markdown") {
@@ -437,10 +590,22 @@ if (format === "markdown") {
   }, 2);
 }
 
-writeFileSync(outputPath, outputContent, "utf-8");
+try {
+  const tempPath = join(dirname(outputPath), `.${basename(outputPath)}.${process.pid}.${Date.now()}.tmp`);
+  try {
+    writeFileSync(tempPath, outputContent, { encoding: "utf-8", flag: "wx" });
+    renameSync(tempPath, outputPath);
+  } finally {
+    try { unlinkSync(tempPath); } catch { /* already renamed or never created */ }
+  }
+} catch (error) {
+  console.error(`Error: unable to write output: ${error.message}`);
+  process.exit(1);
+}
 
 // 状态汇报
 console.log(`计算完成: ${computed.length} 个指标, ${data.length} 条数据`);
 if (computed.length) console.log(`  已计算: ${computed.join(", ")}`);
 if (warnings.length) console.log(`  警告: ${warnings.join("; ")}`);
 console.log(`  输出: ${outputPath} (${format})`);
+if (warnings.length) process.exitCode = 1;

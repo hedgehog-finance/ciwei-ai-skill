@@ -13,8 +13,7 @@
  *   - black-scholes  : 期权定价模型
  *
  * Usage:
- *   node ./scripts/absolute.mjs <method> '<params-json>'
- *   node ./scripts/absolute.mjs <method> --params-file <params.json>
+ *   node ./scripts/absolute.mjs <method> [--key value ... | --params-file <tmp-*.json>]
  */
 
 import DCF from 'discounted-cash-flow';
@@ -32,6 +31,57 @@ function round(v, d = 2) {
 
 function pct(v, d = 2) {
   return `${(v * 100).toFixed(d)}%`;
+}
+
+function assertFiniteOutput(value, path = 'result') {
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new Error(`${path} is not finite; check zero denominators and parameter ranges`);
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertFiniteOutput(item, `${path}[${index}]`));
+  } else if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      assertFiniteOutput(item, `${path}.${key}`);
+    }
+  }
+}
+
+function boundedInteger(value, name, minimum, maximum) {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} 必须是 ${minimum} 到 ${maximum} 之间的整数`);
+  }
+  return value;
+}
+
+function finiteNumber(value, name) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${name} 必须是有限数字`);
+  }
+  return value;
+}
+
+const NUMERIC_PARAMETERS = new Set([
+  'firstFreeCashFlow', 'growthRate', 'terminalFcfMultiple', 'terminalMultiple',
+  'discountRate', 'decimals', 'sharesOutstanding', 'totalShares', 'netDebt', 'cash',
+  'totalDebt', 'marketCap', 'currentPrice', 'marginOfSafety', 'riskFreeRate', 'beta',
+  'equityRiskPremium', 'costOfDebt', 'taxRate', 'equityWeight', 'debtWeight',
+  'discountRateRange', 'discountRateStep', 'terminalMultipleRange', 'terminalMultipleStep',
+  'dividend', 'highGrowthRate', 'highGrowthYears', 'transitionYears', 'S', 'K', 'T',
+  'r', 'sigma', 'q',
+]);
+
+function validateNumericParameters(params) {
+  for (const name of NUMERIC_PARAMETERS) {
+    if (params[name] !== undefined) finiteNumber(params[name], `${name}（必须使用 JSON number，不能使用数字字符串）`);
+  }
+}
+
+function finiteNumberArray(value, name, maximumLength) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > maximumLength) {
+    throw new Error(`${name} 必须是包含 1 到 ${maximumLength} 个元素的数组`);
+  }
+  value.forEach((item, index) => finiteNumber(item, `${name}[${index}]`));
+  return value;
 }
 
 // ─── 标准正态分布累积分布函数 N(x) ──────────────────────────────────────────
@@ -117,9 +167,10 @@ function calcDCF(p) {
     throw new Error('缺少必填参数: firstFreeCashFlow (首期自由现金流)');
   }
   const growthRates = p.growthRates ?? [p.growthRate ?? 0.05];
+  finiteNumberArray(growthRates, 'growthRates', MAX_YEARS);
   const terminalMultiple = p.terminalFcfMultiple ?? p.terminalMultiple ?? 15;
   const discountRate = p.discountRate ?? 0.10;
-  const decimals = p.decimals ?? 2;
+  const decimals = boundedInteger(p.decimals ?? 2, 'decimals', 0, 15);
 
   const result = DCF.calculate(fcf, growthRates, terminalMultiple, discountRate, decimals);
 
@@ -212,10 +263,11 @@ function calcFCFSeries(p) {
   if (fcfSeries.length > MAX_YEARS) {
     throw new Error(`fcfSeries 最多支持 ${MAX_YEARS} 年，当前传入 ${fcfSeries.length} 年`);
   }
+  finiteNumberArray(fcfSeries, 'fcfSeries', MAX_YEARS);
 
   const discountRate = p.discountRate ?? 0.10;
   const terminalMultiple = p.terminalFcfMultiple ?? p.terminalMultiple ?? 15;
-  const decimals = p.decimals ?? 2;
+  const decimals = boundedInteger(p.decimals ?? 2, 'decimals', 0, 15);
 
   const presentValues = fcfSeries.map((fcf, i) => {
     const year = i + 1;
@@ -277,6 +329,7 @@ function calcSensitivity(p) {
     throw new Error('缺少必填参数: firstFreeCashFlow');
   }
   const growthRates = p.growthRates ?? [p.growthRate ?? 0.05];
+  finiteNumberArray(growthRates, 'growthRates', MAX_YEARS);
   const baseDiscount = p.discountRate ?? 0.10;
   const baseTerminal = p.terminalFcfMultiple ?? p.terminalMultiple ?? 15;
   const sharesOutstanding = p.sharesOutstanding;
@@ -289,8 +342,19 @@ function calcSensitivity(p) {
 
   const tmRange = p.terminalMultipleRange ?? 5;
   const tmStep = p.terminalMultipleStep ?? 1;
+  finiteNumber(drRange, 'discountRateRange');
+  finiteNumber(drStep, 'discountRateStep');
+  finiteNumber(tmRange, 'terminalMultipleRange');
+  finiteNumber(tmStep, 'terminalMultipleStep');
+  if (drRange < 0 || tmRange < 0) throw new Error('敏感性分析范围不能为负数');
+  if (drStep <= 0 || tmStep <= 0) throw new Error('敏感性分析步长必须大于 0');
   const tmStart = Math.max(1, baseTerminal - tmRange);
   const tmEnd = baseTerminal + tmRange;
+  const drPoints = Math.floor((drEnd - drStart) / drStep) + 1;
+  const tmPoints = Math.floor((tmEnd - tmStart) / tmStep) + 1;
+  if (drPoints > 101 || tmPoints > 101 || drPoints * tmPoints > 10000) {
+    throw new Error('敏感性分析网格过大；每个维度最多 101 个点，总计最多 10000 个点');
+  }
 
   const discountRates = [];
   for (let r = drStart; r <= drEnd + 1e-9; r += drStep) {
@@ -395,12 +459,15 @@ function calcDDM(p) {
 
   // 三阶段模型：高增长 -> 过渡期 -> 永续
   if (p.highGrowthRate !== undefined && p.highGrowthYears !== undefined && p.transitionYears !== undefined) {
-    return calcDDMThreeStage(D0, p.highGrowthRate, p.highGrowthYears, g, p.transitionYears, r);
+    const highYears = boundedInteger(p.highGrowthYears, 'highGrowthYears', 1, 100);
+    const transitionYears = boundedInteger(p.transitionYears, 'transitionYears', 1, 100);
+    return calcDDMThreeStage(D0, p.highGrowthRate, highYears, g, transitionYears, r);
   }
 
   // 两阶段模型：高增长 -> 永续
   if (p.highGrowthRate !== undefined && p.highGrowthYears !== undefined) {
-    return calcDDMTwoStage(D0, p.highGrowthRate, p.highGrowthYears, g, r);
+    const highYears = boundedInteger(p.highGrowthYears, 'highGrowthYears', 1, 100);
+    return calcDDMTwoStage(D0, p.highGrowthRate, highYears, g, r);
   }
 
   // 单阶段 Gordon Growth
@@ -514,18 +581,29 @@ function calcRNPV(p) {
   if (!Array.isArray(pipeline) || pipeline.length === 0) {
     throw new Error('缺少必填参数: pipeline (管线数组)');
   }
+  if (pipeline.length > 1000) throw new Error('pipeline 最多支持 1000 个项目');
 
   let totalRNPV = 0;
   const details = pipeline.map((item, i) => {
-    if (!Array.isArray(item.cashFlows)) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error(`管线 ${i}: 必须是 JSON 对象`);
+    }
+    if (!Array.isArray(item.cashFlows) || item.cashFlows.length === 0) {
       throw new Error(`管线 ${i}: 缺少 cashFlows 数组`);
     }
+    finiteNumberArray(item.cashFlows, `pipeline[${i}].cashFlows`, 100);
     const dr = item.discountRate ?? 0.10;
     const probability = item.probability;
     if (probability === undefined) {
       throw new Error(`管线 ${i}: 缺少 probability (成功率)`);
     }
     const initialCost = item.initialCost ?? 0;
+    finiteNumber(dr, `pipeline[${i}].discountRate`);
+    finiteNumber(probability, `pipeline[${i}].probability`);
+    finiteNumber(initialCost, `pipeline[${i}].initialCost`);
+    if (probability < 0 || probability > 1) {
+      throw new Error(`pipeline[${i}].probability 必须在 0 到 1 之间`);
+    }
 
     // 计算 NPV
     let npv = -initialCost;
@@ -571,6 +649,9 @@ function calcBlackScholes(p) {
   }
   if (T <= 0) {
     throw new Error('T (到期时间) 必须大于 0');
+  }
+  if (S <= 0 || K <= 0 || sigma <= 0) {
+    throw new Error('S、K 和 sigma 必须大于 0');
   }
 
   const sqrtT = Math.sqrt(T);
@@ -622,7 +703,7 @@ function calcBlackScholes(p) {
 
 const METHODS = {
   dcf: { desc: '基础DCF估值（10年增长率驱动投影）', required: ['firstFreeCashFlow'], exec: calcDCF },
-  'dcf-per-share': { desc: '每股内在价值DCF（需总股本+净债务）', required: ['firstFreeCashFlow', 'sharesOutstanding'], exec: calcDCFPerShare },
+  'dcf-per-share': { desc: '每股内在价值DCF（需总股本+净债务）', required: ['firstFreeCashFlow'], exec: calcDCFPerShare },
   wacc: { desc: 'WACC加权平均资本成本（CAPM模型）', required: [], exec: calcWACC },
   sensitivity: { desc: '敏感性分析矩阵（折现率 x 终端倍数）', required: ['firstFreeCashFlow'], exec: calcSensitivity },
   'fcf-series': { desc: '自定义FCF序列估值（非增长率驱动）', required: ['fcfSeries'], exec: calcFCFSeries },
@@ -638,8 +719,8 @@ function main() {
 
   if (argv.length < 1 || argv[0] === '--help' || argv[0] === '-h') {
     const help = VALID_METHODS.map((m) => `  ${m.padEnd(20)} ${METHODS[m].desc}`).join('\n');
-    console.log(`用法: node absolute.mjs <method> '<params-json>'\n      node absolute.mjs <method> --params-file <params.json>\n\n支持方法:\n${help}`);
-    process.exit(0);
+    console.log(`用法: node absolute.mjs <method> [--key value ... | --params-file <tmp-*.json>]\n      人工兼容: node absolute.mjs <method> '<params-json>'\n\n支持方法:\n${help}`);
+    return;
   }
 
   const method = argv[0].toLowerCase();
@@ -649,6 +730,7 @@ function main() {
   }
 
   const params = readJsonParams(argv.slice(1));
+  validateNumericParameters(params);
 
   const missing = def.required.filter((k) => params[k] === undefined);
   if (missing.length > 0) {
@@ -656,11 +738,17 @@ function main() {
   }
 
   const result = def.exec(params);
+  assertFiniteOutput(result);
   console.log(JSON.stringify({ method, ...result }, null, 2));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main();
+  try {
+    main();
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+    process.exitCode = 1;
+  }
 }
 
 export { METHODS, VALID_METHODS, normalCDF, normalPDF };

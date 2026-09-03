@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Vega-Lite Chart Generator
- * Usage: node vega-chart.mjs <spec.json> <output.png|svg> [options]
+ * Usage: node vega-chart.mjs <tmp-gen-chart-*.json> <output.png|svg> [options]
  *
  * Options:
  *   -o <output>           Output file path (alternative to positional)
@@ -15,11 +15,13 @@
  *                         Use --theme=list to show all available themes.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import * as vega from "vega";
 import * as vegaLite from "vega-lite";
 import { Resvg } from "@resvg/resvg-js";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { resolveTheme, applyVegaTheme, THEME_NAMES } from "./themes.mjs";
+import { parseChartRenderArgs } from "./cli-args.mjs";
 
 // Headless Node has no canvas text measurement; vega's built-in fallback
 // (0.8em per char) underestimates full-width CJK glyphs (~1em per char),
@@ -44,32 +46,23 @@ vega.textMetrics.width = (item, text) => {
   return max * fs;
 };
 
-const args = process.argv.slice(2);
-
-// Parse arguments
-let specPath, outputPath, format, palette, themeName;
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === "-o" || args[i] === "--output") {
-    outputPath = args[++i];
-  } else if (args[i] === "--spec") {
-    specPath = args[++i];
-  } else if (args[i].startsWith("--spec=")) {
-    specPath = args[i].substring("--spec=".length);
-  } else if (args[i].startsWith("--format=")) {
-    format = args[i].split("=")[1];
-  } else if (args[i].startsWith("--palette=")) {
-    palette = args[i].substring("--palette=".length);
-  } else if (args[i].startsWith("--theme=")) {
-    themeName = args[i].substring("--theme=".length);
-  } else if (!specPath) {
-    specPath = args[i];
-  } else if (!outputPath) {
-    outputPath = args[i];
-  }
+let parsedArgs;
+try {
+  parsedArgs = parseChartRenderArgs(process.argv.slice(2));
+} catch (error) {
+  console.error(`Error: ${error.message}`);
+  process.exit(1);
 }
+const { spec: specPath, output: outputPath, palette, theme: themeName } = parsedArgs.options;
+let { format } = parsedArgs.options;
+const outputExtension = outputPath?.toLowerCase().match(/\.(png|svg)$/)?.[1];
 
 // --theme=list: print available themes and exit
 if (themeName === "list") {
+  if (parsedArgs.positionals.length > 0 || Object.keys(parsedArgs.options).length !== 1) {
+    console.error("Error: --theme=list cannot be combined with input or other options");
+    process.exit(1);
+  }
   console.log("Available financial color themes:\n");
   for (const key of THEME_NAMES) {
     const t = resolveTheme(key);
@@ -78,18 +71,80 @@ if (themeName === "list") {
   process.exit(0);
 }
 
-if (!specPath || !outputPath) {
-  console.error("Usage: vega-chart.mjs --spec <spec.json> [-o] <output.png|svg> [--format=png|svg] [--palette=<colors>] [--theme=<name>]");
+if (parsedArgs.help || !specPath || !outputPath) {
+  console.error("Usage: vega-chart.mjs --spec <tmp-gen-chart-*.json> [-o] <output.png|svg> [--format=png|svg] [--palette=<colors>] [--theme=<name>]");
   console.error("  --palette: comma-separated hex colors or named scheme (tableau10, dark2, viridis, etc.)");
   console.error("  --theme:   built-in financial theme (fintech, bloomberg, oldmoney, ...) or 'list' to show all");
+  process.exit(parsedArgs.help ? 0 : 1);
+}
+if (resolve(specPath) === resolve(outputPath)) {
+  console.error("Error: input and output paths must be different");
+  process.exit(1);
+}
+if (!outputExtension) {
+  console.error("Error: output file must use a .png or .svg extension");
   process.exit(1);
 }
 
 if (!format) {
-  format = outputPath.endsWith(".svg") ? "svg" : "png";
+  format = outputExtension;
+} else {
+  format = format.toLowerCase();
+  if (!new Set(["png", "svg"]).has(format)) {
+    console.error(`Error: unsupported format "${format}". Use png or svg.`);
+    process.exit(1);
+  }
+  if (format !== outputExtension) {
+    console.error(`Error: --format=${format} does not match output extension .${outputExtension}`);
+    process.exit(1);
+  }
 }
 
-const specJson = JSON.parse(readFileSync(specPath, "utf-8"));
+let specJson;
+try {
+  const specStat = statSync(specPath);
+  if (!specStat.isFile() || specStat.size > 100 * 1024 * 1024) throw new Error("spec must be a regular file no larger than 100MB");
+  specJson = JSON.parse(readFileSync(specPath, "utf-8").replace(/^\uFEFF/, ""));
+} catch (error) {
+  console.error(`Error: failed to read/parse spec file "${specPath}": ${error.message}`);
+  process.exit(1);
+}
+if (!specJson || typeof specJson !== "object" || Array.isArray(specJson)) {
+  console.error("Error: Vega-Lite spec must be a JSON object");
+  process.exit(1);
+}
+const specDir = dirname(resolve(specPath));
+const MAX_INLINE_ROWS = 1_000_000;
+const MAX_RENDER_DIMENSION = 8_192;
+const MAX_RENDER_PIXELS = 25_000_000;
+
+function validateResourceBounds(spec, context = "spec") {
+  for (const dimension of ["width", "height"]) {
+    const value = spec[dimension];
+    if (typeof value === "number" && (!Number.isFinite(value) || value <= 0 || value > MAX_RENDER_DIMENSION)) {
+      throw new Error(`${context}.${dimension} must be greater than 0 and at most ${MAX_RENDER_DIMENSION}`);
+    }
+    const step = value && typeof value === "object" && !Array.isArray(value) ? value.step : undefined;
+    if (step !== undefined && (typeof step !== "number" || !Number.isFinite(step) || step <= 0 || step > MAX_RENDER_DIMENSION)) {
+      throw new Error(`${context}.${dimension}.step must be greater than 0 and at most ${MAX_RENDER_DIMENSION}`);
+    }
+  }
+  if (typeof spec.width === "number" && typeof spec.height === "number" && spec.width * spec.height > MAX_RENDER_PIXELS) {
+    throw new Error(`${context} render area exceeds ${MAX_RENDER_PIXELS} pixels`);
+  }
+  if (Array.isArray(spec.data?.values) && spec.data.values.length > MAX_INLINE_ROWS) {
+    throw new Error(`${context}.data.values exceeds ${MAX_INLINE_ROWS} rows`);
+  }
+  if (spec.spec && typeof spec.spec === "object") validateResourceBounds(spec.spec, `${context}.spec`);
+  if (Array.isArray(spec.layer)) {
+    for (let i = 0; i < spec.layer.length; i++) validateResourceBounds(spec.layer[i], `${context}.layer[${i}]`);
+  }
+  for (const key of ["concat", "vconcat", "hconcat"]) {
+    if (Array.isArray(spec[key])) {
+      for (let i = 0; i < spec[key].length; i++) validateResourceBounds(spec[key][i], `${context}.${key}[${i}]`);
+    }
+  }
+}
 
 /**
  * Inline external data files referenced via data.url.
@@ -99,12 +154,18 @@ const specJson = JSON.parse(readFileSync(specPath, "utf-8"));
  */
 function inlineExternalData(spec) {
   // Top-level data.url
-  if (spec.data?.url) {
+  if (typeof spec.data?.url === "string" && /^[a-z][a-z0-9+.-]*:/i.test(spec.data.url)) {
+    throw new Error("Remote and URI-based Vega data sources are not supported; use inline values or a local JSON file");
+  }
+  if (typeof spec.data?.url === "string") {
+    const dataPath = isAbsolute(spec.data.url) ? spec.data.url : resolve(specDir, spec.data.url);
     try {
-      spec.data.values = JSON.parse(readFileSync(spec.data.url, "utf-8"));
+      const dataStat = statSync(dataPath);
+      if (!dataStat.isFile() || dataStat.size > 100 * 1024 * 1024) throw new Error("data file must be a regular file no larger than 100MB");
+      spec.data.values = JSON.parse(readFileSync(dataPath, "utf-8").replace(/^\uFEFF/, ""));
       delete spec.data.url;
-    } catch {
-      // File not found or invalid JSON — leave as-is, Vega will report the error
+    } catch (error) {
+      throw new Error(`Unable to inline Vega data file "${dataPath}": ${error.message}`);
     }
   }
 
@@ -117,11 +178,20 @@ function inlineExternalData(spec) {
 
   // Nested composite spec (facet / concat / vconcat / hconcat)
   if (spec.spec) inlineExternalData(spec.spec);
+  for (const key of ["concat", "vconcat", "hconcat"]) {
+    if (Array.isArray(spec[key])) for (const child of spec[key]) inlineExternalData(child);
+  }
 
   return spec;
 }
 
-inlineExternalData(specJson);
+try {
+  inlineExternalData(specJson);
+  validateResourceBounds(specJson);
+} catch (error) {
+  console.error(`Error: ${error.message}`);
+  process.exit(1);
+}
 
 // ─── Data Validation & Auto-fix ─────────────────────────────────────────────
 
@@ -272,8 +342,8 @@ function detectUniformQuantitativeColor(values, encoding, context) {
     .filter((v) => typeof v === "number" && !isNaN(v));
   if (nums.length < 2) return;
 
-  const min = Math.min(...nums);
-  const max = Math.max(...nums);
+  const min = nums.reduce((current, value) => Math.min(current, value), Infinity);
+  const max = nums.reduce((current, value) => Math.max(current, value), -Infinity);
   const range = max - min;
 
   // All identical or within 0.1% of each other
@@ -413,7 +483,7 @@ function getMaxSeriesLength(spec) {
     const key = row[colorField];
     counts[key] = (counts[key] || 0) + 1;
   }
-  return Math.max(...Object.values(counts));
+  return Object.values(counts).reduce((maximum, count) => Math.max(maximum, count), 0);
 }
 
 /** Apply or remove point overlay on a single line-mark container. */
@@ -646,13 +716,13 @@ async function renderPng(view) {
   return resvg.render().asPng();
 }
 
+let renderedOutput;
 if (format === "svg") {
-  const svg = await view.toSVG();
-  writeFileSync(outputPath, svg);
+  renderedOutput = await view.toSVG();
 } else {
   try {
     const png = await renderPng(view);
-    writeFileSync(outputPath, Buffer.from(png));
+    renderedOutput = Buffer.from(png);
   } catch (err) {
     console.error(`[vega-chart] \u274c PNG rendering failed: ${err.message}`);
     console.error(`[vega-chart] Fallback: output SVG instead, then rasterize with a proper SVG renderer.`);
@@ -700,8 +770,15 @@ if (!hasData) {
   console.error(`  2. encoding.field matches data field names`);
   console.error(`  3. temporal field values are ISO 8601 format (e.g. "2024-01-01")`);
   console.error(`  4. quantitative field values are numeric`);
-  console.log(`Chart generated (empty): ${outputPath}${themeInfo}`);
+  console.error(`Chart was not written because no data survived validation: ${outputPath}${themeInfo}`);
   process.exitCode = 1;
 } else {
+  const tempPath = join(dirname(outputPath), `.${basename(outputPath)}.${process.pid}.${Date.now()}.tmp`);
+  try {
+    writeFileSync(tempPath, renderedOutput, { flag: "wx" });
+    renameSync(tempPath, outputPath);
+  } finally {
+    try { unlinkSync(tempPath); } catch { /* already renamed or never created */ }
+  }
   console.log(`Chart generated: ${outputPath}${themeInfo}`);
 }

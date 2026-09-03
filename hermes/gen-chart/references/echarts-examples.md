@@ -163,9 +163,9 @@
 `--theme=<name>` injects color palette, background, and axis/tooltip styling.
 
 ```bash
-node echarts-config.mjs --spec chart.json --theme=bloomberg   # Bloomberg dark
-node echarts-config.mjs --spec chart.json --theme=fintech     # Default
-node echarts-config.mjs --spec chart.json --theme=none        # Raw option
+node echarts-config.mjs --spec <workspace>/tmp-gen-chart-<id>.json --theme=bloomberg   # Bloomberg dark
+node echarts-config.mjs --spec <workspace>/tmp-gen-chart-<id>.json --theme=fintech     # Default
+node echarts-config.mjs --spec <workspace>/tmp-gen-chart-<id>.json --theme=none        # Raw option
 node echarts-config.mjs --theme=list                          # Show all themes
 ```
 

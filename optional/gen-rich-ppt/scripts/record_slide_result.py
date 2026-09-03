@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 
 from slide_run_state import (
@@ -15,6 +17,7 @@ from slide_run_state import (
     find_slide,
     locked_jobs,
     now_iso,
+    read_json,
     rel_to_deck,
     resolve_deck_path,
     set_run_status,
@@ -33,6 +36,9 @@ FORBIDDEN_BACKEND_TERMS = (
     "manual",
     "script render",
 )
+MAX_IMAGE_BYTES = 50 * 1024 * 1024
+MAX_IMAGE_DIMENSION = 32768
+MAX_IMAGE_PIXELS = 25_000_000
 
 
 def _validate_backend(backend: str) -> str:
@@ -84,10 +90,35 @@ def _load_prompt_job(deck_dir: Path, slide: dict) -> dict:
     if not isinstance(job_ref, str) or not job_ref.strip():
         return {}
     path = resolve_deck_path(deck_dir, job_ref)
+    try:
+        path.relative_to(deck_dir)
+    except ValueError as exc:
+        raise SystemExit(f"Prompt job must live inside deck dir: {path}") from exc
     if not path.exists():
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = read_json(path)
     return data if isinstance(data, dict) else {}
+
+
+def _validate_png(path: Path) -> Path:
+    if path.stat().st_size > MAX_IMAGE_BYTES:
+        raise SystemExit(f"Selected source image exceeds the 50MB limit: {path}")
+    try:
+        from PIL import Image
+        with Image.open(path) as image:
+            if (
+                image.format != "PNG"
+                or image.width < 1
+                or image.height < 1
+                or image.width > MAX_IMAGE_DIMENSION
+                or image.height > MAX_IMAGE_DIMENSION
+                or image.width * image.height > MAX_IMAGE_PIXELS
+            ):
+                raise ValueError("final slide source must be a non-empty PNG image")
+            image.verify()
+    except (ImportError, OSError, ValueError) as exc:
+        raise SystemExit(f"Invalid selected source image {path}: {exc}") from exc
+    return path
 
 
 def _expected_backend_labels(jobs: dict, slide: dict, prompt_job: dict) -> list[str]:
@@ -130,6 +161,10 @@ def main() -> int:
     parser.add_argument("--selected-source", required=True, help="Generated image selected by the worker.")
     parser.add_argument("--qa-note", required=True)
     args = parser.parse_args()
+    for option, value in (("--agent-id", args.agent_id), ("--qa-note", args.qa_note)):
+        if not value.strip():
+            parser.error(f"{option} must not be empty")
+    agent_id = args.agent_id.strip()
 
     deck_dir = deck_dir_from_target(args.deck)
     with locked_jobs(deck_dir) as jobs:
@@ -137,28 +172,37 @@ def main() -> int:
         if slide.get("status") != "dispatched":
             raise SystemExit(f"{slide['slide_id']} must be dispatched before result recording; got {slide.get('status')}")
         dispatch = slide.get("dispatch") or {}
-        if dispatch.get("agent_id") != args.agent_id:
+        if dispatch.get("agent_id") != agent_id:
             raise SystemExit(
-                f"Agent id mismatch for {slide['slide_id']}: dispatch={dispatch.get('agent_id')} result={args.agent_id}"
+                f"Agent id mismatch for {slide['slide_id']}: dispatch={dispatch.get('agent_id')} result={agent_id}"
             )
 
         backend_used = _validate_backend(args.backend_used)
         prompt_job = _load_prompt_job(deck_dir, slide)
         expected_backend_labels = _expected_backend_labels(jobs, slide, prompt_job)
         matched_expected_backend = _matched_expected_backend(backend_used, expected_backend_labels)
-        source = ensure_file(Path(args.selected_source).expanduser().resolve(), "selected source image")
+        source = _validate_png(ensure_file(Path(args.selected_source).expanduser().resolve(), "selected source image"))
         out_ref = slide.get("out") or f"origin_image/{slide['slide_id']}.png"
         target = resolve_deck_path(deck_dir, out_ref)
         try:
             target.relative_to(deck_dir)
         except ValueError as exc:
             raise SystemExit(f"Final slide image must live inside deck dir: {target}") from exc
+        if target.suffix.lower() != ".png":
+            raise SystemExit(f"Final slide image path must end in .png: {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         if source != target:
-            shutil.copy2(source, target)
+            fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+            os.close(fd)
+            try:
+                shutil.copy2(source, temp_name)
+                os.replace(temp_name, target)
+            finally:
+                if os.path.exists(temp_name):
+                    os.unlink(temp_name)
 
         slide["result"] = {
-            "agent_id": args.agent_id,
+            "agent_id": agent_id,
             "backend_used": backend_used,
             "selected_source": str(source),
             "selected_source_sha256": sha256_file(source),
@@ -167,7 +211,7 @@ def main() -> int:
             "expected_backend": matched_expected_backend,
             "expected_backend_labels": expected_backend_labels,
             "sample_generation_method_matched": bool(matched_expected_backend),
-            "qa_note": args.qa_note,
+            "qa_note": args.qa_note.strip(),
             "recorded_at": now_iso(),
         }
         slide["status"] = "recorded"

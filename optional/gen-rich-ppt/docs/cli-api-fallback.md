@@ -6,10 +6,10 @@ Let `{skill_root}` mean the directory containing `SKILL.md`.
 
 ## Runtime Setup
 
-CLI/API fallback commands use the shared runtime environment. Before running `scripts/assemble_ppt.py` or fallback image commands, make sure the shared runtime exists. If `~/.gen-rich-ppt/.venv/bin/python` is missing, or if importing script dependencies fails, create or refresh the environment:
+CLI/API fallback commands use the shared runtime environment. In the examples below, `{runtime_python}` means `~/.gen-rich-ppt/.venv/bin/python` on POSIX/Git Bash and `%USERPROFILE%\\.gen-rich-ppt\\.venv\\Scripts\\python.exe` in PowerShell. `{bootstrap_python}` means `python3` on POSIX/Git Bash or `py -3` in Windows PowerShell. Before running `scripts/assemble_ppt.py` or fallback image commands, make sure the runtime interpreter exists and can import the dependencies; otherwise create or refresh the environment:
 
 ```bash
-python3 {skill_root}/scripts/gen_rich_ppt_runtime.py bootstrap
+{bootstrap_python} {skill_root}/scripts/gen_rich_ppt_runtime.py bootstrap
 ```
 
 This is an internal setup step for the skill. Do not ask the user to run it unless dependency installation fails and user approval or troubleshooting is required.
@@ -21,15 +21,15 @@ The fallback CLI automatically resolves HogAgent `skills_config.json`, `GEN_RICH
 Basic generation command:
 
 ```bash
-~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/image_gen.py generate --model gpt-image-2 --prompt-file {prompt_file} --size 2560x1440 --quality medium --out {base_dir}/{deck_name}/origin_image/slide_01.png
+{runtime_python} {skill_root}/scripts/image_gen.py generate --model gpt-image-2 --prompt-file {prompt_file} --size 2560x1440 --quality medium --out {base_dir}/{deck_name}/origin_image/slide_01.png
 ```
 
 The fallback CLI accepts model names containing `gpt-image-`, such as `gpt-image-2` or `openai/gpt-image-2`.
 
-When generating from saved `prompts/slide_XX.json` files, use the job's `prompt` field only when the job does not require input images:
+When generating from saved `prompts/slide_XX.json` files, pass the job file directly. The CLI reads its top-level `prompt` field, including UTF-8 BOM files. Use this text-only path only when the job does not require input images:
 
 ```bash
-python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("{base_dir}/{deck_name}/prompts/slide_01.json").read_text())["prompt"])' | ~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/image_gen.py generate --prompt-file - --size 2560x1440 --quality medium --out {base_dir}/{deck_name}/origin_image/slide_01.png
+{runtime_python} {skill_root}/scripts/image_gen.py generate --prompt-file {base_dir}/{deck_name}/prompts/slide_01.json --size 2560x1440 --quality medium --out {base_dir}/{deck_name}/origin_image/slide_01.png
 ```
 
 Before using this text-only `generate` path, inspect the assigned `prompts/slide_XX.json`. If `input_images` is non-empty or `requires_context_images` is true, this command is not sufficient because it does not attach those images. Use a selected backend/path that can pass the required images, such as the built-in image tool with the images visible in context or a CLI/API edit/image-input path that supplies every required source image. If no such path is available, stop and ask the user whether to switch backend. Do not generate a text-only replacement for a strict input asset.
@@ -48,7 +48,7 @@ The fallback CLI defaults to 2K 16:9 landscape output, `2560x1440`, because it k
 If a slide is mostly correct but has a localized issue, use the selected backend's edit capability when available. In CLI/API fallback mode:
 
 ```bash
-~/.gen-rich-ppt/.venv/bin/python {skill_root}/scripts/image_gen.py edit --image {slide_path} --prompt {edit_prompt} --out {new_slide_path}
+{runtime_python} {skill_root}/scripts/image_gen.py edit --image {slide_path} --prompt {edit_prompt} --out {new_slide_path}
 ```
 
 Replace the final slide only after validating the edited output.
@@ -68,5 +68,5 @@ Transparent-background requests:
 Run the API doctor only when troubleshooting fallback API access:
 
 ```bash
-python3 {skill_root}/scripts/gen_rich_ppt_runtime.py doctor --check-api
+{bootstrap_python} {skill_root}/scripts/gen_rich_ppt_runtime.py doctor --check-api
 ```
