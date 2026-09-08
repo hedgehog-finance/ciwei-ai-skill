@@ -20,7 +20,7 @@ Skills requiring `npm install`: `company-valuation`, `doc-convert`, `fin-calc`, 
 | Skill | Version | Description |
 |-------|---------|-------------|
 | `hedgehog-company-index-data` | 1.11.2 | Query A-share company profiles, daily/minute quotes and financials, domestic/global index quotes and weights, Shenwan industry data, and trading calendars |
-| `hedgehog-daily-morning-briefing` | 2.2.5 | Pre-market intelligence brief — filters macro, sector and watchlist news to extract core logic |
+| `hedgehog-daily-morning-briefing` | 2.2.6 | Pre-market intelligence brief — filters macro, sector and watchlist news to extract core logic |
 | `hedgehog-financial-report-analysis` | 1.3.1 | Financial report interpretation with context-aware anomaly analysis, audit-note checks, cash flow and risk |
 | `deliver_files` | 2.1.2 | Compatibility wrapper for restricted Gateway file delivery, now also available in `hog-gateway-tools` |
 | `hog-gateway-tools` | 3.5.2 | Authenticated General MCP CLI: task result reporting, restricted file delivery, Work context, Task Resource status, Knowledge, Memory, notifications, watchlist and resource recommendations |
