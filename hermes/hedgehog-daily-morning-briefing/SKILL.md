@@ -5,7 +5,7 @@ description: >
     Best for: high signal-to-noise pre-market briefing.
     Triggers: morning brief, financial breakfast, daily summary.
     Blocking: deep stock fundamentals, live order book data.
-version: 2.2.6
+version: 2.2.7
 workflow_based: true
 compatibility: Requires Node.js >=18 in the Hermes terminal runtime.
 prerequisites:
@@ -65,7 +65,17 @@ prerequisites:
 
 等待全部 Sub-agent 完成，仅读取 `output-sub-*.md`，按下方模板生成 `final-output-morning-briefing-<YYYYMMDD>.md`；摘要缺失要素时标注数据不足，不回读原始数据。首次 `write` 写入标题，后续用 `write(append:true)` 逐节追加，修改用 `edit`。
 
-核对模板结构、字数、引用及交付文件完整性。仅交付终稿、`data-index.md`、`sub-agent-list.txt`，文本回复只发摘要。
+完成 Markdown 后，读取该终稿，按下方排版要求生成同目录、同名的 `final-output-morning-briefing-<YYYYMMDD>.html`。
+
+核对两版内容、模板结构、字数和引用；预览 HTML 的桌面与窄屏布局，检查表格、数值是否完整可读。交付 Markdown、HTML、`data-index.md`、`sub-agent-list.txt`，文本回复只发摘要。
+
+## HTML 排版
+
+- 以 Markdown 终稿为内容依据，保留章节层级、顺序、事实、数值、引用及 AI 提示；图表须有文内数据支撑。
+- 生成可独立打开的 UTF-8 HTML，内嵌 CSS，使用系统字体并设置移动端 viewport，离线也能完整阅读。
+- 采用浅蓝白背景、深色正文和蓝色强调，页首突出早报标题与日期；用编号标题、卡片、留白区分板块，装饰保持克制。
+- 按内容密度安排宽屏分栏、窄屏单列；重要事件与今日关注逐条呈现，突出事件标题、时间和影响对象，产业信息按行业分组。
+- 表格使用清晰表头、行分隔与数值对齐，突出关键数值并保留时期、单位和正负号；窄屏允许表格横向滚动，避免裁切。风险用简洁提示区呈现。
 
 ## 输出模板
 

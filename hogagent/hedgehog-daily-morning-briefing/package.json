@@ -1,7 +1,7 @@
 {
   "name": "hedgehog-daily-morning-briefing",
   "license": "GPL-3.0",
-  "version": "2.2.6",
+  "version": "2.2.7",
   "private": true,
   "type": "commonjs",
   "description": "Pre-market intelligence brief. Filters macro, sector and watchlist news to extract core logic.",
