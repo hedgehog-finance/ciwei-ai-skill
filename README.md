@@ -35,15 +35,17 @@ All Agents use one CLI parameter protocol. Pass safe non-empty top-level scalar 
 | Skill | Version | Description |
 |-------|---------|-------------|
 | `hedgehog-company-index-data` | 1.11.2 | Query A-share company profiles, daily/minute quotes and financials, domestic/global index quotes and weights, Shenwan industry data, and trading calendars |
-| `hedgehog-daily-morning-briefing` | 2.2.7 | Pre-market intelligence brief — filters macro, sector and watchlist news to extract core logic |
+| `hedgehog-daily-morning-briefing` | 2.2.8 | Pre-market intelligence brief — filters macro, sector and watchlist news to extract core logic |
 | `hedgehog-financial-report-analysis` | 1.3.0 | Financial report interpretation with context-aware anomaly analysis, audit-note checks, cash flow and risk |
 | `hog-gateway-tools` | 3.5.2 | Authenticated General MCP CLI with restricted file delivery, Work context, Task Resource status, Knowledge and persistent Memory commands plus bounded failure retries and durable Task polling |
-| `hedgehog-in-depth-analysis` | 2.2.2 | Probability-tree scenario analysis for major events (macro volatility / black swans / geopolitics / policy shifts), predicting high-probability paths and measuring market impact |
-| `hedgehog-information-verification` | 2.2.2 | Cross-validate market rumors and unconfirmed news via multi-source verification, quantifying confidence scores to prevent misinformation-driven decisions |
+| `hedgehog-in-depth-analysis` | 2.2.3 | Probability-tree scenario analysis for major events (macro volatility / black swans / geopolitics / policy shifts), predicting high-probability paths and measuring market impact |
+| `hedgehog-information-verification` | 2.2.3 | Cross-validate market rumors and unconfirmed news via multi-source verification, quantifying confidence scores to prevent misinformation-driven decisions |
 | `hog-kb-tools` | 1.2.2 | Legacy KB MCP endpoint compatibility; Knowledge search/get are also available in `hog-gateway-tools` 3.5.2 |
 | `hedgehog-macro-industry-data` | 1.8.2 | Query China-US macro data: Shibor, LPR, CPI, PPI, PMI, M0/M1/M2, social financing, US Treasury yields |
 | `hedgehog-news-reports` | 1.9.2 | Unified search and analysis across financial news, A-share research reports, and listed company announcements |
 | `hedgehog-stock-research` | 2.3.0 | Multi-dimensional individual stock analysis: fundamentals, sentiment, technicals, and backtest-ready quantitative research ideas + CIO integration |
+
+Morning briefing, in-depth analysis, and information verification deliver their reports and `data-index.md`. The optional runtime registry `sub-agent-list.txt` is internal: it is neither a deliverable nor an acceptance prerequisite, and its absence is not reported as a missing output. Sub-agent coverage is checked against actual returned results.
 
 ### Cross-Agent Authentication
 

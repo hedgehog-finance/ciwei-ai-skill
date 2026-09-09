@@ -6,7 +6,7 @@ description: >
     Best for: event war-gaming and impact analysis.
     Triggers: event sandbox | deep analysis | path forecast | impact assessment
     NOT for: news verification; stock fundamentals.
-version: 2.2.2
+version: 2.2.3
 workflow_based: true
 compatibility: Requires Node.js >=18 in the Hermes terminal runtime.
 prerequisites:
@@ -42,7 +42,7 @@ prerequisites:
 - {file-name}: {行数:<N>;字节:<B>}
 ```
 - 每个sub-agent回读原始数据做摘要，并落盘 output_file `output-sub-<short_title>.<ext>`。**摘要必须自足**（主 Agent 推演与终稿只读摘要、不回读原始数据）：包含推演所需全部要素——关键数据点、~100字概述、重要资讯列表（`{资讯分类:id} 标题`，按重要性降序）、行情/资金异动要点（如适用），800 tokens 以内
-- Sub-agent 注册表 `sub-agent-list.txt` 由系统在每个 sub-agent 完成时自动追加记录，主 Agent 与 sub-agent 均无需创建或写入该文件
+- `sub-agent-list.txt` 是系统内部运行记录，不属于交付物；无需创建、读取或校验，缺失不影响验收，也不列为未交付成果。
 
 ## 核心工作流
 
@@ -76,8 +76,8 @@ prerequisites:
 > **注意**：批次 2 根据事件性质按需执行，如无明确受影响个股或无需网络搜索，可跳过对应 Sub-agent。
 
 #### 批次完成后
-1. 等待全部 Sub-agent 返回（`data-index.md` 由 sub-agent 追加、`sub-agent-list.txt` 由系统自动维护，主 Agent 无需读写这两个文件）
-2. 在上下文中提示"原始数据文件索引在 data-index.md 中，sub-agent列表在 sub-agent-list.txt 中"
+1. 等待全部 Sub-agent 返回（`data-index.md` 由 sub-agent 追加，主 Agent 无需读写该文件）
+2. 在上下文中提示"原始数据文件索引在 data-index.md 中"
 
 ### Stage 3：推演分析与报告生成（主 Agent 执行）
 **目标**：仅基于 sub-agent 摘要构建概率树，生成深度推演报告。
@@ -104,9 +104,9 @@ prerequisites:
 2. 检查 `[参考资料]` 尾注格式符合规范，引用真实（非捏造）。
 3. 检查所有 `[AI生成提示]` 已填写。
 4. 检查所有落盘文件存在且非空。
-5. 检查 `sub-agent-list.txt` 文件，核实 Sub-agent 数量是否匹配。
+5. 核对实际调度的 Sub-agent 返回结果，确认数量和任务覆盖范围匹配。
 6. 如发现缺失，回退补全对应章节（补全同样只读 `output-sub-*.md` 摘要，用 `edit` 修改）。
-7. 最后交付 `final-output-*.*`, `data-index.md`, `sub-agent-list.txt` 文件，不要交付其他文件。
+7. 最后交付 `final-output-*.*`, `data-index.md` 文件，不要交付其他文件。
 8. 最后文本回复仅发送摘要，不要发送全文
 
 ## 演化路径表格模板

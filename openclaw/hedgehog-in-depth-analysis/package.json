@@ -1,7 +1,7 @@
 {
   "name": "hedgehog-in-depth-analysis",
   "license": "GPL-3.0",
-  "version": "2.2.2",
+  "version": "2.2.3",
   "private": true,
   "type": "commonjs",
   "description": "Probability-tree scenario analysis for major events (macro volatility/black swans/geopolitics/policy shifts), predicting high-probability paths and measuring market impact.",

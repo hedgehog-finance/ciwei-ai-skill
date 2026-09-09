@@ -5,7 +5,7 @@ description: >
     Best for: high signal-to-noise pre-market briefing.
     Triggers: morning brief, financial breakfast, daily summary.
     Blocking: deep stock fundamentals, live order book data.
-version: 2.2.7
+version: 2.2.8
 workflow_based: true
 ---
 
@@ -26,7 +26,7 @@ workflow_based: true
 ```
 
 - 每个 Sub-agent 读取原始数据，按输出模板提取所负责内容，保存为 `output-sub-<short_title>.md`（800 tokens 以内）；摘要须自足，保留数据口径、日程日期/时间和真实引用 `{资讯分类:id} 标题`。
-- `sub-agent-list.txt` 由系统自动维护；主 Agent 无需读写两个索引文件。
+- `sub-agent-list.txt` 是系统内部运行记录，不属于交付物；无需创建、读取或校验，缺失不影响验收，也不列为未交付成果。主 Agent 无需读写 `data-index.md`。
 
 ## 工作流
 
@@ -64,7 +64,7 @@ workflow_based: true
 
 完成 Markdown 后，读取该终稿，按下方排版要求生成同目录、同名的 `final-output-morning-briefing-<YYYYMMDD>.html`。
 
-核对两版内容、模板结构、字数和引用；预览 HTML 的桌面与窄屏布局，检查表格、数值是否完整可读。交付 Markdown、HTML、`data-index.md`、`sub-agent-list.txt`，文本回复只发摘要。
+核对两版内容、模板结构、字数和引用；预览 HTML 的桌面与窄屏布局，检查表格、数值是否完整可读。交付 Markdown、HTML、`data-index.md`，文本回复只发摘要。
 
 ## HTML 排版
 
@@ -105,7 +105,7 @@ workflow_based: true
 | --- | --- |
 | [名称/代码] | [关键异动及数据] |
 
-**风险排雷**：[明确的负面催化因素，100 字以内；无则写“今日暂无重大排雷事项”]
+**风险排雷**：[按风险类别呈现明确的负面催化因素，格式为“类别：风险事项”，合计 100 字以内；无则写“今日暂无重大排雷事项”]
 
 ### 3. 今日关注
 

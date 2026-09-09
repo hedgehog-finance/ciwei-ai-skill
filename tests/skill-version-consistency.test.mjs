@@ -6,6 +6,9 @@ import test from "node:test";
 
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const EXPECTED = {
+  "hedgehog-daily-morning-briefing": "2.2.8",
+  "hedgehog-in-depth-analysis": "2.2.3",
+  "hedgehog-information-verification": "2.2.3",
   "company-valuation": "3.0.5",
   deliver_files: "2.1.2",
   "doc-convert": "2.1.2",
